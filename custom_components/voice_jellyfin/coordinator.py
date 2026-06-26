@@ -136,6 +136,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             tv=self.tv_controller,
             nav=self.navigation_mode,
             hass=self.hass,
+            tv_type=self.entry.data.get(CONF_TV_TYPE, ""),
         )
         result = await router.async_route(text, self.ai_provider, self.ai_context)
         if result.media_title:

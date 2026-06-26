@@ -15,8 +15,8 @@ _LOGGER = logging.getLogger(__name__)
 # System prompt
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """\
-You are an AI assistant that controls a Jellyfin media server and an Android TV.
+_SYSTEM_PROMPT_TEMPLATE = """\
+You are an AI assistant that controls a Jellyfin media server{tv_clause}.
 The user speaks voice commands and you must parse their intent.
 
 You MUST respond with ONLY a valid JSON object — no prose, no markdown fences.
@@ -67,6 +67,12 @@ class IntentResult:
 # Router
 # ---------------------------------------------------------------------------
 
+_TV_LABELS = {
+    "apple_tv": "an Apple TV",
+    "android_tv": "an Android TV",
+}
+
+
 class IntentRouter:
     """Parses a natural language command via AI and dispatches the action."""
 
@@ -76,11 +82,15 @@ class IntentRouter:
         tv: Any,
         nav: Any,
         hass: Any,
+        tv_type: str = "",
     ) -> None:
         self._jellyfin = jellyfin
         self._tv = tv
         self._nav = nav
         self._hass = hass
+        tv_label = _TV_LABELS.get(tv_type)
+        tv_clause = f" and {tv_label}" if tv_label else ""
+        self._system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(tv_clause=tv_clause)
 
     async def async_route(
         self,
@@ -106,7 +116,7 @@ class IntentRouter:
         try:
             raw = await provider.async_query(
                 messages=context.get_messages(),
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=self._system_prompt,
             )
             result = self._parse(raw)
         except Exception as exc:
