@@ -16,6 +16,19 @@
           "jellyfin_default_user": "Default User ID (optional)"
         }
       },
+      "tv_device": {
+        "title": "TV Device",
+        "description": "Choose the type of TV you want to control with voice navigation.",
+        "data": { "tv_type": "TV Type" }
+      },
+      "apple_tv": {
+        "title": "Apple TV",
+        "description": "Select the Apple TV remote entity from your Home Assistant devices.",
+        "data": {
+          "apple_tv_entity": "Apple TV Remote Entity",
+          "tv_wake_support": "Enable Wake-on-Command"
+        }
+      },
       "android_tv": {
         "title": "Android TV / Fire TV Device",
         "data": {

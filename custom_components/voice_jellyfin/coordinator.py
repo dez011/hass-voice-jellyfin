@@ -17,7 +17,11 @@ from .const import (
     CONF_JELLYFIN_URL,
     CONF_JELLYFIN_API_KEY,
     CONF_AI_PROVIDER,
+    CONF_TV_TYPE,
     CONF_ANDROID_TV_ENTITY,
+    CONF_APPLE_TV_ENTITY,
+    TV_TYPE_APPLE,
+    TV_TYPE_ANDROID,
 )
 
 _LOGGER = logging.getLogger(LOGGER_NAME)
@@ -72,12 +76,20 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._async_load_ai_provider(config)
         self._current_provider_label = config.get(CONF_AI_PROVIDER, "")
 
-        # Android TV controller
-        tv_entity = config.get(CONF_ANDROID_TV_ENTITY)
-        if tv_entity:
-            from .tv.android_tv import AndroidTVController
-            self.tv_controller = AndroidTVController(self.hass, tv_entity)
-            self._current_device = tv_entity
+        # TV controller — pick the right backend based on configured type
+        tv_type = config.get(CONF_TV_TYPE, TV_TYPE_ANDROID)
+        if tv_type == TV_TYPE_APPLE:
+            apple_entity = config.get(CONF_APPLE_TV_ENTITY)
+            if apple_entity:
+                from .tv.apple_tv import AppleTVController
+                self.tv_controller = AppleTVController(self.hass, apple_entity)
+                self._current_device = apple_entity
+        else:
+            tv_entity = config.get(CONF_ANDROID_TV_ENTITY)
+            if tv_entity:
+                from .tv.android_tv import AndroidTVController
+                self.tv_controller = AndroidTVController(self.hass, tv_entity)
+                self._current_device = tv_entity
 
         # Navigation mode
         self.navigation_mode = NavigationMode(self.hass, self.entry, self)

@@ -22,10 +22,15 @@ from .const import (
     CONF_JELLYFIN_API_KEY,
     CONF_JELLYFIN_USERNAME,
     CONF_JELLYFIN_DEFAULT_USER,
+    CONF_TV_TYPE,
     CONF_ANDROID_TV_ENTITY,
+    CONF_APPLE_TV_ENTITY,
     CONF_ADB_HOST,
     CONF_ADB_PORT,
     CONF_TV_WAKE_SUPPORT,
+    TV_TYPE_NONE,
+    TV_TYPE_ANDROID,
+    TV_TYPE_APPLE,
     CONF_AI_PROVIDER,
     CONF_AI_API_KEY,
     CONF_AI_MODEL,
@@ -115,7 +120,7 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await client.async_connect()
                 await client.async_close()
                 self._data.update(user_input)
-                return await self.async_step_android_tv()
+                return await self.async_step_tv_device()
             except Exception:
                 errors["base"] = "cannot_connect"
 
@@ -130,10 +135,57 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_tv_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 3: Choose TV type."""
+        if user_input is not None:
+            self._data.update(user_input)
+            tv_type = user_input.get(CONF_TV_TYPE, TV_TYPE_NONE)
+            if tv_type == TV_TYPE_APPLE:
+                return await self.async_step_apple_tv()
+            if tv_type == TV_TYPE_ANDROID:
+                return await self.async_step_android_tv()
+            return await self.async_step_ai_provider()
+
+        return self.async_show_form(
+            step_id="tv_device",
+            data_schema=vol.Schema({
+                vol.Required(CONF_TV_TYPE, default=TV_TYPE_NONE): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            {"value": TV_TYPE_NONE, "label": "No TV / Skip"},
+                            {"value": TV_TYPE_APPLE, "label": "Apple TV"},
+                            {"value": TV_TYPE_ANDROID, "label": "Android TV / Fire TV"},
+                        ],
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                ),
+            }),
+        )
+
+    async def async_step_apple_tv(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 3a: Apple TV remote entity."""
+        if user_input is not None:
+            self._data.update(user_input)
+            return await self.async_step_ai_provider()
+
+        return self.async_show_form(
+            step_id="apple_tv",
+            data_schema=vol.Schema({
+                vol.Required(CONF_APPLE_TV_ENTITY): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="remote")
+                ),
+                vol.Optional(CONF_TV_WAKE_SUPPORT, default=True): bool,
+            }),
+        )
+
     async def async_step_android_tv(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Step 3: Android TV / ADB device."""
+        """Step 3b: Android TV / ADB device."""
         if user_input is not None:
             self._data.update(user_input)
             return await self.async_step_ai_provider()

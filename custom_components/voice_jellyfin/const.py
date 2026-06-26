@@ -12,10 +12,17 @@ CONF_JELLYFIN_PASSWORD = "jellyfin_password"
 CONF_JELLYFIN_DEFAULT_USER = "jellyfin_default_user"
 CONF_JELLYFIN_LIBRARIES = "jellyfin_libraries"
 
+CONF_TV_TYPE = "tv_type"
 CONF_ANDROID_TV_ENTITY = "android_tv_entity"
+CONF_APPLE_TV_ENTITY = "apple_tv_entity"
 CONF_ADB_HOST = "adb_host"
 CONF_ADB_PORT = "adb_port"
 CONF_TV_WAKE_SUPPORT = "tv_wake_support"
+
+# TV types
+TV_TYPE_NONE = "none"
+TV_TYPE_ANDROID = "android_tv"
+TV_TYPE_APPLE = "apple_tv"
 
 CONF_AI_PROVIDER = "ai_provider"
 CONF_AI_API_KEY = "ai_api_key"
