@@ -1,0 +1,96 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Voice Jellyfin — Networking",
+        "description": "Choose how your Jellyfin and Home Assistant are connected.",
+        "data": { "network_mode": "Network Mode" }
+      },
+      "jellyfin": {
+        "title": "Jellyfin Connection",
+        "description": "Enter your Jellyfin server URL and credentials.",
+        "data": {
+          "jellyfin_url": "Jellyfin URL",
+          "jellyfin_api_key": "API Key",
+          "jellyfin_username": "Username (optional)",
+          "jellyfin_default_user": "Default User ID (optional)"
+        }
+      },
+      "android_tv": {
+        "title": "Android TV / Fire TV Device",
+        "data": {
+          "android_tv_entity": "Media Player Entity",
+          "adb_host": "ADB Host (optional)",
+          "adb_port": "ADB Port",
+          "tv_wake_support": "Enable Wake-on-Command"
+        }
+      },
+      "ai_provider": {
+        "title": "AI Provider",
+        "description": "Choose the AI assistant that will understand your voice commands.",
+        "data": { "ai_provider": "Provider" }
+      },
+      "cloud_provider": {
+        "title": "Cloud AI Credentials",
+        "data": {
+          "ai_api_key": "API Key",
+          "ai_model": "Model (leave blank for default)",
+          "ai_base_url": "Base URL (optional override)",
+          "ai_temperature": "Temperature",
+          "ai_max_tokens": "Max Tokens",
+          "ai_streaming": "Enable Streaming",
+          "ai_timeout": "Timeout (seconds)"
+        }
+      },
+      "ollama": {
+        "title": "Ollama — Local AI",
+        "data": {
+          "ollama_host": "Host",
+          "ollama_port": "Port",
+          "ollama_https": "Use HTTPS",
+          "ollama_model": "Model",
+          "ollama_context_size": "Context Size",
+          "ollama_keep_alive": "Keep Alive",
+          "ai_streaming": "Enable Streaming",
+          "ai_timeout": "Timeout (seconds)"
+        }
+      },
+      "openai_compat": {
+        "title": "OpenAI-Compatible Endpoint",
+        "description": "Works with LM Studio, vLLM, or any OpenAI-compatible server.",
+        "data": {
+          "ai_base_url": "Base URL",
+          "ai_api_key": "API Key",
+          "ai_model": "Model Name",
+          "ai_streaming": "Enable Streaming",
+          "ai_timeout": "Timeout (seconds)"
+        }
+      },
+      "nav_mode": {
+        "title": "Navigation Mode",
+        "data": {
+          "nav_wake_phrase": "Wake Phrase",
+          "nav_timeout": "Inactivity Timeout",
+          "nav_continuous": "Continuous Listening",
+          "nav_confirmation_speech": "Speak Confirmation"
+        }
+      },
+      "accessibility_button": {
+        "title": "Accessibility Button (Optional)",
+        "description": "Choose any HA entity to activate Navigation Mode when triggered.",
+        "data": {
+          "button_entity": "Trigger Entity",
+          "button_trigger": "Trigger Type"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect — check URL and credentials.",
+      "invalid_auth": "Invalid authentication credentials.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "Voice Jellyfin is already configured."
+    }
+  }
+}

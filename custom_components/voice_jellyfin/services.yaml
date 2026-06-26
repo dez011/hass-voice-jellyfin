@@ -1,0 +1,144 @@
+play:
+  name: Play Media
+  description: >
+    Search for media by name or query and play it on the active Jellyfin session.
+  fields:
+    query:
+      name: Query
+      description: The title, artist, genre, or description of what to play.
+      required: true
+      example: "The Dark Knight"
+      selector:
+        text:
+    library_id:
+      name: Library ID
+      description: Optional Jellyfin library ID to restrict the search to.
+      required: false
+      example: "abc123"
+      selector:
+        text:
+
+search:
+  name: Search
+  description: Search for media in Jellyfin and return matching titles.
+  fields:
+    query:
+      name: Query
+      description: Search term.
+      required: true
+      example: "action movies 2023"
+      selector:
+        text:
+
+resume:
+  name: Resume Playback
+  description: Resume the most recently in-progress media for a user.
+  fields:
+    user_id:
+      name: User ID
+      description: Jellyfin user ID to resume for.  Defaults to configured default user.
+      required: false
+      example: "abc123def456"
+      selector:
+        text:
+
+pause:
+  name: Pause Playback
+  description: Pause the current Jellyfin playback session.
+  fields:
+    session_id:
+      name: Session ID
+      description: Optional specific session ID.  Defaults to the active session.
+      required: false
+      example: "abcdef123456"
+      selector:
+        text:
+
+stop:
+  name: Stop Playback
+  description: Stop the current Jellyfin playback session.
+  fields:
+    session_id:
+      name: Session ID
+      description: Optional specific session ID.  Defaults to the active session.
+      required: false
+      example: "abcdef123456"
+      selector:
+        text:
+
+navigate:
+  name: Navigate
+  description: Send a directional navigation key event to the Android TV.
+  fields:
+    direction:
+      name: Direction
+      description: The key direction to send.
+      required: true
+      example: "down"
+      selector:
+        select:
+          options:
+            - up
+            - down
+            - left
+            - right
+            - select
+            - back
+            - home
+            - page_up
+            - page_down
+
+scroll:
+  name: Scroll
+  description: Scroll up or down by a given number of steps.
+  fields:
+    direction:
+      name: Direction
+      description: "Scroll direction: up or down."
+      required: true
+      example: "down"
+      selector:
+        select:
+          options:
+            - up
+            - down
+    amount:
+      name: Amount
+      description: Number of key presses to send (default 1).
+      required: false
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 20
+          step: 1
+
+select:
+  name: Select / OK
+  description: Press the OK/Select button on the Android TV.
+  fields: {}
+
+navigation_mode_on:
+  name: Navigation Mode On
+  description: Activate Navigation Mode for the entry.
+  fields: {}
+
+navigation_mode_off:
+  name: Navigation Mode Off
+  description: Deactivate Navigation Mode.
+  fields: {}
+
+repeat_last_action:
+  name: Repeat Last Action
+  description: Repeat the most recent navigation or playback action.
+  fields: {}
+
+go_home:
+  name: Go Home
+  description: Press the Home button on the Android TV.
+  fields: {}
+
+go_back:
+  name: Go Back
+  description: Press the Back button on the Android TV.
+  fields: {}

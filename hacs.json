@@ -1,0 +1,8 @@
+{
+  "name": "Voice Jellyfin",
+  "description": "Accessibility-focused voice control for Jellyfin via AI natural language, navigation mode, and physical accessibility buttons.",
+  "content_in_root": false,
+  "render_readme": true,
+  "homeassistant": "2024.1.0",
+  "category": "integration"
+}

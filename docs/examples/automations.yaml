@@ -1,0 +1,84 @@
+# Voice Jellyfin — Example Automations
+#
+# Copy these into your automations.yaml or import them via the HA UI
+# (Settings → Automations → Import from YAML).
+
+# ---------------------------------------------------------------------------
+# 1. Physical button activates Navigation Mode
+#    Trigger: any entity that becomes "on" / "press" when pressed
+# ---------------------------------------------------------------------------
+- alias: "Voice Jellyfin — Button activates Navigation Mode"
+  description: >
+    Pressing the configured accessibility button activates Navigation Mode
+    so the next voice command is interpreted as a TV key event.
+  trigger:
+    - platform: state
+      entity_id: input_button.accessibility_btn   # <-- change to your entity
+      # For a binary_sensor: add  to: "on"
+  condition: []
+  action:
+    - service: voice_jellyfin.navigation_mode_on
+  mode: single
+
+# ---------------------------------------------------------------------------
+# 2. Sunrise disables Navigation Mode
+#    Useful for "good morning" routines that should exit nav mode automatically
+# ---------------------------------------------------------------------------
+- alias: "Voice Jellyfin — Sunrise exits Navigation Mode"
+  description: >
+    At sunrise, deactivate Navigation Mode so normal voice commands work
+    without the TV-remote interpretation layer.
+  trigger:
+    - platform: sun
+      event: sunrise
+      offset: "+00:00"
+  condition:
+    - condition: state
+      entity_id: switch.voice_jellyfin_navigation_mode
+      state: "on"
+  action:
+    - service: voice_jellyfin.navigation_mode_off
+    - service: tts.speak
+      target:
+        entity_id: tts.home_assistant_cloud   # <-- change to your TTS entity
+      data:
+        message: "Good morning! Navigation mode has been turned off."
+        cache: false
+  mode: single
+
+# ---------------------------------------------------------------------------
+# 3. TTS confirmation when Navigation Mode state changes
+#    Speaks aloud whenever Navigation Mode is activated or deactivated
+# ---------------------------------------------------------------------------
+- alias: "Voice Jellyfin — TTS confirmation on Navigation Mode change"
+  description: >
+    Speaks a short confirmation message when Navigation Mode is turned on or off,
+    providing audio feedback for users who cannot see the screen.
+  trigger:
+    - platform: event
+      event_type: voice_jellyfin_navigation_mode_changed
+  condition: []
+  action:
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: "{{ trigger.event.data.active == true }}"
+          sequence:
+            - service: tts.speak
+              target:
+                entity_id: tts.home_assistant_cloud   # <-- change to your TTS entity
+              data:
+                message: "Navigation mode is now active. Say up, down, left, right, select, or back."
+                cache: true
+        - conditions:
+            - condition: template
+              value_template: "{{ trigger.event.data.active == false }}"
+          sequence:
+            - service: tts.speak
+              target:
+                entity_id: tts.home_assistant_cloud   # <-- change to your TTS entity
+              data:
+                message: "Navigation mode has ended."
+                cache: true
+  mode: queued
+  max: 2

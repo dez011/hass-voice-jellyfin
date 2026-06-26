@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Update manifest version
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" \
+            custom_components/voice_jellyfin/manifest.json
+
+      - name: Create release archive
+        run: |
+          zip -r "voice_jellyfin-${{ github.ref_name }}.zip" \
+            custom_components/voice_jellyfin/ \
+            hacs.json \
+            README.md \
+            LICENSE \
+            -x "**/__pycache__/*" "**/*.pyc" "**/.DS_Store"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Voice Jellyfin ${{ github.ref_name }}"
+          generate_release_notes: true
+          files: "voice_jellyfin-${{ github.ref_name }}.zip"
+          body: |
+            ## Voice Jellyfin ${{ github.ref_name }}
+
+            Accessibility-focused voice control for Jellyfin via Home Assistant.
+
+            ### Installation via HACS
+            1. Open HACS → Integrations → ⋮ → Custom repositories
+            2. Add `https://github.com/dez011/hacs-voice-jellyfin` as an Integration
+            3. Search "Voice Jellyfin" and install
+
+            ### Manual Installation
+            Download `voice_jellyfin-${{ github.ref_name }}.zip`, extract, and copy
+            `custom_components/voice_jellyfin/` to your HA `custom_components/` directory.
