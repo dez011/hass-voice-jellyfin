@@ -22,6 +22,7 @@ from .const import (
     CONF_JELLYFIN_API_KEY,
     CONF_JELLYFIN_USERNAME,
     CONF_JELLYFIN_DEFAULT_USER,
+    CONF_JELLYFIN_VERIFY_SSL,
     CONF_TV_TYPE,
     CONF_ANDROID_TV_ENTITY,
     CONF_APPLE_TV_ENTITY,
@@ -94,7 +95,7 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     url=user_input[CONF_JELLYFIN_URL],
                     api_key=user_input.get(CONF_JELLYFIN_API_KEY, ""),
                 )
-                client = JellyfinClient(auth)
+                client = JellyfinClient(auth, verify_ssl=user_input.get(CONF_JELLYFIN_VERIFY_SSL, True))
                 await client.async_connect()
                 await client.async_close()
                 if test_only:
@@ -111,6 +112,7 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional(CONF_JELLYFIN_API_KEY): str,
             vol.Optional(CONF_JELLYFIN_USERNAME): str,
             vol.Optional(CONF_JELLYFIN_DEFAULT_USER): str,
+            vol.Optional(CONF_JELLYFIN_VERIFY_SSL, default=True): bool,
             vol.Optional("test_connection", default=False): bool,
         })
 

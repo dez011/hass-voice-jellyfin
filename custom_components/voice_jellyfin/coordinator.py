@@ -16,6 +16,7 @@ from .const import (
     UPDATE_INTERVAL,
     CONF_JELLYFIN_URL,
     CONF_JELLYFIN_API_KEY,
+    CONF_JELLYFIN_VERIFY_SSL,
     CONF_AI_PROVIDER,
     CONF_TV_TYPE,
     CONF_ANDROID_TV_ENTITY,
@@ -64,7 +65,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             url=config[CONF_JELLYFIN_URL],
             api_key=config.get(CONF_JELLYFIN_API_KEY, ""),
         )
-        self.jellyfin_client = JellyfinClient(auth)
+        self.jellyfin_client = JellyfinClient(auth, verify_ssl=config.get(CONF_JELLYFIN_VERIFY_SSL, True))
         try:
             await self.jellyfin_client.async_connect()
             self._connected = True

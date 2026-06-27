@@ -9,6 +9,7 @@
           "jellyfin_api_key": "API Key",
           "jellyfin_username": "Username (optional)",
           "jellyfin_default_user": "Default User ID (optional)",
+          "jellyfin_verify_ssl": "Verify SSL certificate (disable for Tailscale)",
           "test_connection": "Test connection (don't advance)"
         }
       },

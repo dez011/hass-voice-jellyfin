@@ -11,6 +11,7 @@ CONF_JELLYFIN_USERNAME = "jellyfin_username"
 CONF_JELLYFIN_PASSWORD = "jellyfin_password"
 CONF_JELLYFIN_DEFAULT_USER = "jellyfin_default_user"
 CONF_JELLYFIN_LIBRARIES = "jellyfin_libraries"
+CONF_JELLYFIN_VERIFY_SSL = "jellyfin_verify_ssl"
 
 CONF_TV_TYPE = "tv_type"
 CONF_ANDROID_TV_ENTITY = "android_tv_entity"

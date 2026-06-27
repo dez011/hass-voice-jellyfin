@@ -15,8 +15,9 @@ _LOGGER = logging.getLogger(__name__)
 class JellyfinClient:
     """Thin async wrapper around the Jellyfin REST API."""
 
-    def __init__(self, auth: JellyfinAuth) -> None:
+    def __init__(self, auth: JellyfinAuth, verify_ssl: bool = True) -> None:
         self._auth = auth
+        self._verify_ssl = verify_ssl
         self._session: Optional[aiohttp.ClientSession] = None
 
     # ------------------------------------------------------------------
@@ -25,9 +26,11 @@ class JellyfinClient:
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
+            connector = aiohttp.TCPConnector(ssl=None if self._verify_ssl else False)
             self._session = aiohttp.ClientSession(
                 headers=self._auth.auth_headers(),
                 raise_for_status=True,
+                connector=connector,
             )
         return self._session
 
