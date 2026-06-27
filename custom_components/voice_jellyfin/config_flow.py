@@ -102,8 +102,9 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else:
                     self._data.update(user_input)
                     return await self.async_step_tv_device()
-            except Exception:
+            except Exception as exc:
                 errors["base"] = "cannot_connect"
+                description_placeholders["status"] = f"\n\nError: {exc}"
 
         _schema = vol.Schema({
             vol.Required(CONF_JELLYFIN_URL, default="http://localhost:8096"): str,
@@ -117,7 +118,7 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="jellyfin",
             data_schema=self.add_suggested_values_to_schema(_schema, last_input),
             errors=errors,
-            description_placeholders=description_placeholders or None,
+            description_placeholders={"status": description_placeholders.get("status", "")},
         )
 
     async def async_step_tv_device(
