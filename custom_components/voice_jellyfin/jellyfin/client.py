@@ -32,13 +32,31 @@ class JellyfinClient:
         return self._session
 
     async def async_connect(self) -> dict[str, Any]:
-        """GET /System/Info — raises on failure."""
+        """GET /health then /System/Info — raises on failure with detail."""
+        base = self._auth.base_url()
         session = await self._get_session()
-        url = f"{self._auth.base_url()}/System/Info"
-        async with session.get(url) as resp:
-            resp.raise_for_status()
-            data: dict[str, Any] = await resp.json()
-        _LOGGER.debug("Connected to Jellyfin %s", data.get("Version", "?"))
+
+        # Health check first so we get a clear error if the server is unreachable
+        health_url = f"{base}/health"
+        _LOGGER.info("Checking Jellyfin health at %s", health_url)
+        try:
+            async with session.get(health_url, raise_for_status=False) as resp:
+                _LOGGER.info("Jellyfin /health → HTTP %s", resp.status)
+        except Exception as exc:
+            _LOGGER.error("Jellyfin /health failed: %s", exc)
+            raise
+
+        url = f"{base}/System/Info"
+        _LOGGER.info("Connecting to Jellyfin at %s", url)
+        try:
+            async with session.get(url) as resp:
+                resp.raise_for_status()
+                data: dict[str, Any] = await resp.json()
+        except Exception as exc:
+            _LOGGER.error("Jellyfin /System/Info failed: %s", exc)
+            raise
+
+        _LOGGER.info("Connected to Jellyfin %s", data.get("Version", "?"))
         return data
 
     async def async_close(self) -> None:
