@@ -362,25 +362,121 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self, entry: config_entries.ConfigEntry) -> None:
         self._entry = entry
+        self._options: dict[str, Any] = {}
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            self._options.update(user_input)
+            tv_type = user_input.get(CONF_TV_TYPE, TV_TYPE_NONE)
+            if tv_type == TV_TYPE_APPLE:
+                return await self.async_step_apple_tv()
+            if tv_type == TV_TYPE_ANDROID:
+                return await self.async_step_android_tv()
+            return await self.async_step_nav()
 
         current = self._entry.options or self._entry.data
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema({
-                vol.Optional(CONF_NAV_TIMEOUT, default=str(current.get(CONF_NAV_TIMEOUT, DEFAULT_NAV_TIMEOUT))): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[{"value": str(v), "label": k} for k, v in NAV_TIMEOUT_OPTIONS.items()],
-                        mode=selector.SelectSelectorMode.LIST,
-                    )
-                ),
-                vol.Optional(CONF_NAV_WAKE_PHRASE, default=current.get(CONF_NAV_WAKE_PHRASE, DEFAULT_NAV_WAKE_PHRASE)): str,
-                vol.Optional(CONF_NAV_CONFIRMATION_SPEECH, default=current.get(CONF_NAV_CONFIRMATION_SPEECH, True)): bool,
-                vol.Optional(CONF_BUTTON_ENTITY, default=current.get(CONF_BUTTON_ENTITY, "")): str,
-            }),
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({
+                    vol.Required(CONF_TV_TYPE): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                {"value": TV_TYPE_NONE, "label": "No TV / Skip"},
+                                {"value": TV_TYPE_APPLE, "label": "Apple TV"},
+                                {"value": TV_TYPE_ANDROID, "label": "Android TV / Fire TV"},
+                            ],
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    ),
+                }),
+                {CONF_TV_TYPE: current.get(CONF_TV_TYPE, TV_TYPE_NONE)},
+            ),
+        )
+
+    async def async_step_apple_tv(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        if user_input is not None:
+            self._options.update(user_input)
+            return await self.async_step_nav()
+
+        current = self._entry.options or self._entry.data
+        return self.async_show_form(
+            step_id="apple_tv",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({
+                    vol.Required(CONF_APPLE_TV_ENTITY): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="remote")
+                    ),
+                    vol.Optional(CONF_TV_WAKE_SUPPORT): bool,
+                }),
+                {
+                    CONF_APPLE_TV_ENTITY: current.get(CONF_APPLE_TV_ENTITY, ""),
+                    CONF_TV_WAKE_SUPPORT: current.get(CONF_TV_WAKE_SUPPORT, True),
+                },
+            ),
+        )
+
+    async def async_step_android_tv(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        if user_input is not None:
+            self._options.update(user_input)
+            return await self.async_step_nav()
+
+        current = self._entry.options or self._entry.data
+        return self.async_show_form(
+            step_id="android_tv",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({
+                    vol.Optional(CONF_ANDROID_TV_ENTITY): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="media_player")
+                    ),
+                    vol.Optional(CONF_ADB_HOST): str,
+                    vol.Optional(CONF_ADB_PORT): int,
+                    vol.Optional(CONF_TV_WAKE_SUPPORT): bool,
+                }),
+                {
+                    CONF_ANDROID_TV_ENTITY: current.get(CONF_ANDROID_TV_ENTITY, ""),
+                    CONF_ADB_HOST: current.get(CONF_ADB_HOST, ""),
+                    CONF_ADB_PORT: current.get(CONF_ADB_PORT, 5555),
+                    CONF_TV_WAKE_SUPPORT: current.get(CONF_TV_WAKE_SUPPORT, True),
+                },
+            ),
+        )
+
+    async def async_step_nav(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        if user_input is not None:
+            self._options.update(user_input)
+            return self.async_create_entry(title="", data=self._options)
+
+        current = self._entry.options or self._entry.data
+        return self.async_show_form(
+            step_id="nav",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({
+                    vol.Optional(CONF_NAV_TIMEOUT): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[{"value": str(v), "label": k} for k, v in NAV_TIMEOUT_OPTIONS.items()],
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    ),
+                    vol.Optional(CONF_NAV_WAKE_PHRASE): str,
+                    vol.Optional(CONF_NAV_CONFIRMATION_SPEECH): bool,
+                    vol.Optional(CONF_BUTTON_ENTITY): selector.EntitySelector(
+                        selector.EntitySelectorConfig()
+                    ),
+                }),
+                {
+                    CONF_NAV_TIMEOUT: str(current.get(CONF_NAV_TIMEOUT, DEFAULT_NAV_TIMEOUT)),
+                    CONF_NAV_WAKE_PHRASE: current.get(CONF_NAV_WAKE_PHRASE, DEFAULT_NAV_WAKE_PHRASE),
+                    CONF_NAV_CONFIRMATION_SPEECH: current.get(CONF_NAV_CONFIRMATION_SPEECH, True),
+                    CONF_BUTTON_ENTITY: current.get(CONF_BUTTON_ENTITY, ""),
+                },
+            ),
         )

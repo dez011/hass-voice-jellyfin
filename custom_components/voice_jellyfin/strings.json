@@ -94,6 +94,39 @@
         }
       }
     },
+    "options": {
+      "step": {
+        "init": {
+          "title": "TV Device",
+          "data": { "tv_type": "TV Type" }
+        },
+        "apple_tv": {
+          "title": "Apple TV",
+          "data": {
+            "apple_tv_entity": "Apple TV Remote Entity",
+            "tv_wake_support": "Enable Wake-on-Command"
+          }
+        },
+        "android_tv": {
+          "title": "Android TV / Fire TV",
+          "data": {
+            "android_tv_entity": "Media Player Entity",
+            "adb_host": "ADB Host (optional)",
+            "adb_port": "ADB Port",
+            "tv_wake_support": "Enable Wake-on-Command"
+          }
+        },
+        "nav": {
+          "title": "Navigation & Button",
+          "data": {
+            "nav_wake_phrase": "Wake Phrase",
+            "nav_timeout": "Inactivity Timeout",
+            "nav_confirmation_speech": "Speak Confirmation",
+            "button_entity": "Accessibility Button Entity"
+          }
+        }
+      }
+    },
     "error": {
       "cannot_connect": "Cannot connect — check URL and credentials.",
       "invalid_auth": "Invalid authentication credentials.",
