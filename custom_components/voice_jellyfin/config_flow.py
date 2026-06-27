@@ -95,7 +95,7 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     url=user_input[CONF_JELLYFIN_URL],
                     api_key=user_input.get(CONF_JELLYFIN_API_KEY, ""),
                 )
-                client = JellyfinClient(auth, verify_ssl=user_input.get(CONF_JELLYFIN_VERIFY_SSL, True))
+                client = JellyfinClient(auth, verify_ssl=user_input.get(CONF_JELLYFIN_VERIFY_SSL, True), hass=self.hass)
                 await client.async_connect()
                 await client.async_close()
                 if test_only:

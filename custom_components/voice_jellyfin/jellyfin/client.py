@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import logging
+import ssl
 from typing import Any, Optional
 
 import aiohttp
+from homeassistant.helpers.aiohttp_client import async_get_clientsession, async_create_clientsession
 
 from .auth import JellyfinAuth
 from .models import Library, MediaItem, PlaybackSession
@@ -15,29 +17,37 @@ _LOGGER = logging.getLogger(__name__)
 class JellyfinClient:
     """Thin async wrapper around the Jellyfin REST API."""
 
-    def __init__(self, auth: JellyfinAuth, verify_ssl: bool = True) -> None:
+    def __init__(self, auth: JellyfinAuth, verify_ssl: bool = True, hass: Any = None) -> None:
         self._auth = auth
         self._verify_ssl = verify_ssl
+        self._hass = hass
         self._session: Optional[aiohttp.ClientSession] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def _get_session(self) -> aiohttp.ClientSession:
+    def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            connector = aiohttp.TCPConnector(ssl=None if self._verify_ssl else False)
-            self._session = aiohttp.ClientSession(
-                headers=self._auth.auth_headers(),
-                raise_for_status=True,
-                connector=connector,
-            )
+            if self._hass is not None:
+                self._session = async_create_clientsession(
+                    self._hass,
+                    verify_ssl=self._verify_ssl,
+                    headers=self._auth.auth_headers(),
+                )
+            else:
+                connector = aiohttp.TCPConnector(ssl=None if self._verify_ssl else False)
+                self._session = aiohttp.ClientSession(
+                    headers=self._auth.auth_headers(),
+                    raise_for_status=True,
+                    connector=connector,
+                )
         return self._session
 
     async def async_connect(self) -> dict[str, Any]:
         """GET /health then /System/Info — raises on failure with detail."""
         base = self._auth.base_url()
-        session = await self._get_session()
+        session = self._get_session()
 
         # Health check first so we get a clear error if the server is unreachable
         health_url = f"{base}/health"
@@ -74,7 +84,7 @@ class JellyfinClient:
 
     async def async_get_libraries(self) -> list[Library]:
         """GET /Library/VirtualFolders → list of Library objects."""
-        session = await self._get_session()
+        session = self._get_session()
         url = f"{self._auth.base_url()}/Library/VirtualFolders"
         async with session.get(url) as resp:
             data = await resp.json()
@@ -88,7 +98,7 @@ class JellyfinClient:
         self, query: str, limit: int = 20
     ) -> list[MediaItem]:
         """Search items by name (fuzzy-ish via Jellyfin's search API)."""
-        session = await self._get_session()
+        session = self._get_session()
         url = f"{self._auth.base_url()}/Items"
         params = {
             "SearchTerm": query,
@@ -108,7 +118,7 @@ class JellyfinClient:
         self, library_id: Optional[str] = None, limit: int = 20
     ) -> list[MediaItem]:
         """Return recently-added media items."""
-        session = await self._get_session()
+        session = self._get_session()
         url = f"{self._auth.base_url()}/Items/Latest"
         params: dict[str, Any] = {
             "Limit": limit,
@@ -126,7 +136,7 @@ class JellyfinClient:
         self, user_id: str, limit: int = 10
     ) -> list[MediaItem]:
         """GET /Users/{user_id}/Items/Resume — in-progress items."""
-        session = await self._get_session()
+        session = self._get_session()
         url = f"{self._auth.base_url()}/Users/{user_id}/Items/Resume"
         params = {
             "Limit": limit,
@@ -143,7 +153,7 @@ class JellyfinClient:
         self, user_id: str, limit: int = 50
     ) -> list[MediaItem]:
         """Return items marked as favourite by the user."""
-        session = await self._get_session()
+        session = self._get_session()
         url = f"{self._auth.base_url()}/Users/{user_id}/Items"
         params = {
             "IsFavorite": "true",
@@ -161,7 +171,7 @@ class JellyfinClient:
         self, genre: str, library_id: Optional[str] = None
     ) -> list[MediaItem]:
         """Return items matching a genre, optionally scoped to a library."""
-        session = await self._get_session()
+        session = self._get_session()
         url = f"{self._auth.base_url()}/Items"
         params: dict[str, Any] = {
             "Genres": genre,
@@ -184,7 +194,7 @@ class JellyfinClient:
 
     async def async_get_sessions(self) -> list[PlaybackSession]:
         """GET /Sessions → list of active playback sessions."""
-        session = await self._get_session()
+        session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions"
         async with session.get(url) as resp:
             data = await resp.json()
@@ -193,7 +203,7 @@ class JellyfinClient:
 
     async def async_play(self, session_id: str, item_id: str) -> None:
         """POST /Sessions/{session_id}/Playing — start playback of an item."""
-        session = await self._get_session()
+        session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing"
         params = {
             "playCommand": "PlayNow",
@@ -205,14 +215,14 @@ class JellyfinClient:
 
     async def async_pause(self, session_id: str) -> None:
         """POST /Sessions/{session_id}/Playing/Unpause — toggle pause."""
-        session = await self._get_session()
+        session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing/Unpause"
         async with session.post(url) as resp:
             await resp.read()
 
     async def async_stop(self, session_id: str) -> None:
         """DELETE /Sessions/{session_id}/Playing — stop playback."""
-        session = await self._get_session()
+        session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing"
         async with session.delete(url) as resp:
             await resp.read()

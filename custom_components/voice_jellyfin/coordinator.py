@@ -65,7 +65,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             url=config[CONF_JELLYFIN_URL],
             api_key=config.get(CONF_JELLYFIN_API_KEY, ""),
         )
-        self.jellyfin_client = JellyfinClient(auth, verify_ssl=config.get(CONF_JELLYFIN_VERIFY_SSL, True))
+        self.jellyfin_client = JellyfinClient(auth, verify_ssl=config.get(CONF_JELLYFIN_VERIFY_SSL, True), hass=self.hass)
         try:
             await self.jellyfin_client.async_connect()
             self._connected = True
