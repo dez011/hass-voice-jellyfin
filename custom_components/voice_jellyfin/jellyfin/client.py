@@ -59,14 +59,15 @@ class JellyfinClient:
             _LOGGER.error("Jellyfin /health failed: %s", exc)
             raise
 
-        url = f"{base}/System/Info"
-        _LOGGER.info("Connecting to Jellyfin at %s", url)
+        # Use public endpoint first (no auth needed) to verify server identity
+        pub_url = f"{base}/System/Info/Public"
+        _LOGGER.info("Connecting to Jellyfin at %s", pub_url)
         try:
-            async with session.get(url) as resp:
+            async with session.get(pub_url) as resp:
                 resp.raise_for_status()
                 data: dict[str, Any] = await resp.json()
         except Exception as exc:
-            _LOGGER.error("Jellyfin /System/Info failed: %s", exc)
+            _LOGGER.error("Jellyfin /System/Info/Public failed: %s", exc)
             raise
 
         _LOGGER.info("Connected to Jellyfin %s", data.get("Version", "?"))
