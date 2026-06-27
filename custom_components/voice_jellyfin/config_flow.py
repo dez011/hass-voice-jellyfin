@@ -51,7 +51,6 @@ from .const import (
     CONF_NAV_CONFIRMATION_SPEECH,
     CONF_BUTTON_ENTITY,
     CONF_BUTTON_TRIGGER,
-    CONF_NETWORK_MODE,
     DEFAULT_NAV_WAKE_PHRASE,
     DEFAULT_NAV_TIMEOUT,
     DEFAULT_AI_TEMPERATURE,
@@ -61,10 +60,6 @@ from .const import (
     DEFAULT_OLLAMA_PORT,
     DEFAULT_OLLAMA_CONTEXT_SIZE,
     DEFAULT_OLLAMA_KEEP_ALIVE,
-    NETWORK_MODE_LOCAL,
-    NETWORK_MODE_HTTPS,
-    NETWORK_MODE_TAILSCALE,
-    NETWORK_MODE_CUSTOM,
     NAV_TIMEOUT_OPTIONS,
 )
 
@@ -80,27 +75,7 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Step 1: Networking mode."""
-        if user_input is not None:
-            self._data.update(user_input)
-            return await self.async_step_jellyfin()
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema({
-                vol.Required(CONF_NETWORK_MODE, default=NETWORK_MODE_LOCAL): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            {"value": NETWORK_MODE_LOCAL, "label": "Local HTTP"},
-                            {"value": NETWORK_MODE_HTTPS, "label": "HTTPS / Reverse Proxy"},
-                            {"value": NETWORK_MODE_TAILSCALE, "label": "Tailscale / MagicDNS"},
-                            {"value": NETWORK_MODE_CUSTOM, "label": "Custom"},
-                        ],
-                        mode=selector.SelectSelectorMode.LIST,
-                    )
-                ),
-            }),
-        )
+        return await self.async_step_jellyfin(user_input)
 
     async def async_step_jellyfin(
         self, user_input: dict[str, Any] | None = None

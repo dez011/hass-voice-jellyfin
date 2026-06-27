@@ -51,8 +51,6 @@ CONF_BUTTON_ENTITY = "button_entity"
 CONF_BUTTON_TRIGGER = "button_trigger"
 CONF_BUTTON_BEHAVIOR = "button_behavior"
 
-CONF_NETWORK_MODE = "network_mode"
-
 # AI Providers
 AI_PROVIDER_HA_CONVERSATION = "ha_conversation"
 AI_PROVIDER_OPENAI = "openai"
@@ -104,13 +102,6 @@ DEFAULT_OLLAMA_HOST = "localhost"
 DEFAULT_OLLAMA_PORT = 11434
 DEFAULT_OLLAMA_CONTEXT_SIZE = 4096
 DEFAULT_OLLAMA_KEEP_ALIVE = "5m"
-
-# Network modes
-NETWORK_MODE_LOCAL = "local"
-NETWORK_MODE_HTTPS = "https"
-NETWORK_MODE_TAILSCALE = "tailscale"
-NETWORK_MODE_CADDY = "caddy"
-NETWORK_MODE_CUSTOM = "custom"
 
 # Services
 SERVICE_PLAY = "play"
