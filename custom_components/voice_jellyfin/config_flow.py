@@ -80,12 +80,15 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_jellyfin(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Step 2: Jellyfin connection."""
+        """Step 1: Jellyfin connection."""
         errors: dict[str, str] = {}
+        description_placeholders: dict[str, str] = {}
+        last_input = user_input or {}
 
         if user_input is not None:
             from .jellyfin.client import JellyfinClient
             from .jellyfin.auth import JellyfinAuth
+            test_only = user_input.pop("test_connection", False)
             try:
                 auth = JellyfinAuth(
                     url=user_input[CONF_JELLYFIN_URL],
@@ -94,20 +97,27 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 client = JellyfinClient(auth)
                 await client.async_connect()
                 await client.async_close()
-                self._data.update(user_input)
-                return await self.async_step_tv_device()
+                if test_only:
+                    description_placeholders["status"] = "✓ Connection successful!"
+                else:
+                    self._data.update(user_input)
+                    return await self.async_step_tv_device()
             except Exception:
                 errors["base"] = "cannot_connect"
 
+        _schema = vol.Schema({
+            vol.Required(CONF_JELLYFIN_URL, default="http://localhost:8096"): str,
+            vol.Optional(CONF_JELLYFIN_API_KEY): str,
+            vol.Optional(CONF_JELLYFIN_USERNAME): str,
+            vol.Optional(CONF_JELLYFIN_DEFAULT_USER): str,
+            vol.Optional("test_connection", default=False): bool,
+        })
+
         return self.async_show_form(
             step_id="jellyfin",
-            data_schema=vol.Schema({
-                vol.Required(CONF_JELLYFIN_URL, default="http://localhost:8096"): str,
-                vol.Optional(CONF_JELLYFIN_API_KEY): str,
-                vol.Optional(CONF_JELLYFIN_USERNAME): str,
-                vol.Optional(CONF_JELLYFIN_DEFAULT_USER): str,
-            }),
+            data_schema=self.add_suggested_values_to_schema(_schema, last_input),
             errors=errors,
+            description_placeholders=description_placeholders or None,
         )
 
     async def async_step_tv_device(

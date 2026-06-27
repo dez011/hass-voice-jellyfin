@@ -3,12 +3,13 @@
     "step": {
       "jellyfin": {
         "title": "Jellyfin Connection",
-        "description": "Enter your Jellyfin server URL and credentials.",
+        "description": "Enter your Jellyfin server URL and credentials.{status}",
         "data": {
           "jellyfin_url": "Jellyfin URL",
           "jellyfin_api_key": "API Key",
           "jellyfin_username": "Username (optional)",
-          "jellyfin_default_user": "Default User ID (optional)"
+          "jellyfin_default_user": "Default User ID (optional)",
+          "test_connection": "Test connection (don't advance)"
         }
       },
       "tv_device": {
