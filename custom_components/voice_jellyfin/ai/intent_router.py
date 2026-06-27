@@ -21,11 +21,11 @@ The user speaks voice commands and you must parse their intent.
 
 You MUST respond with ONLY a valid JSON object — no prose, no markdown fences.
 The JSON schema is:
-{
+{{
   "intent": "<one of the intents listed below>",
-  "params": { <intent-specific key/value pairs> },
+  "params": {{ <intent-specific key/value pairs> }},
   "speech": "<optional short spoken reply to the user>"
-}
+}}
 
 Valid intents and their params:
 - PLAY        params: query (string), library_id (optional string)
