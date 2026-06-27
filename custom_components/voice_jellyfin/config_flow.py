@@ -244,11 +244,10 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_ollama(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Step 4c: Ollama local configuration."""
+        """Step 4c: Ollama host/port — fetch model list then go to model picker."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Fetch model list to validate connectivity
             try:
                 from .ai.providers.ollama import OllamaProvider
                 models = await OllamaProvider.async_list_models(
@@ -258,23 +257,53 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 self._data.update(user_input)
                 self._data["_ollama_models"] = models
-                return await self.async_step_nav_mode()
-            except Exception:
+                return await self.async_step_ollama_model()
+            except Exception as exc:
                 errors["base"] = "cannot_connect"
+                _LOGGER.error("Ollama connection failed: %s", exc)
 
         return self.async_show_form(
             step_id="ollama",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({
+                    vol.Required(CONF_OLLAMA_HOST): str,
+                    vol.Required(CONF_OLLAMA_PORT): int,
+                    vol.Optional(CONF_OLLAMA_HTTPS): bool,
+                }),
+                {
+                    CONF_OLLAMA_HOST: DEFAULT_OLLAMA_HOST,
+                    CONF_OLLAMA_PORT: DEFAULT_OLLAMA_PORT,
+                    CONF_OLLAMA_HTTPS: False,
+                },
+            ),
+            errors=errors,
+        )
+
+    async def async_step_ollama_model(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 4c-ii: Pick model from discovered list + advanced options."""
+        if user_input is not None:
+            self._data.update(user_input)
+            return await self.async_step_nav_mode()
+
+        models: list[str] = self._data.get("_ollama_models", [])
+        model_options = [{"value": m, "label": m} for m in models] or [{"value": "llama3", "label": "llama3"}]
+
+        return self.async_show_form(
+            step_id="ollama_model",
             data_schema=vol.Schema({
-                vol.Required(CONF_OLLAMA_HOST, default=DEFAULT_OLLAMA_HOST): str,
-                vol.Required(CONF_OLLAMA_PORT, default=DEFAULT_OLLAMA_PORT): int,
-                vol.Optional(CONF_OLLAMA_HTTPS, default=False): bool,
-                vol.Optional(CONF_OLLAMA_MODEL, default="llama3"): str,
+                vol.Required(CONF_OLLAMA_MODEL): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=model_options,
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                ),
                 vol.Optional(CONF_OLLAMA_CONTEXT_SIZE, default=DEFAULT_OLLAMA_CONTEXT_SIZE): int,
                 vol.Optional(CONF_OLLAMA_KEEP_ALIVE, default=DEFAULT_OLLAMA_KEEP_ALIVE): str,
                 vol.Optional(CONF_AI_STREAMING, default=True): bool,
                 vol.Optional(CONF_AI_TIMEOUT, default=DEFAULT_AI_TIMEOUT): int,
             }),
-            errors=errors,
         )
 
     async def async_step_openai_compat(

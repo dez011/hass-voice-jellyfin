@@ -54,10 +54,16 @@
       },
       "ollama": {
         "title": "Ollama — Local AI",
+        "description": "Enter your Ollama server address. We'll fetch your installed models.",
         "data": {
           "ollama_host": "Host",
           "ollama_port": "Port",
-          "ollama_https": "Use HTTPS",
+          "ollama_https": "Use HTTPS"
+        }
+      },
+      "ollama_model": {
+        "title": "Ollama — Select Model",
+        "data": {
           "ollama_model": "Model",
           "ollama_context_size": "Context Size",
           "ollama_keep_alive": "Keep Alive",
