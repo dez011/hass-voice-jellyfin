@@ -392,10 +392,261 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
     def __init__(self, entry: config_entries.ConfigEntry) -> None:
         self._entry = entry
         self._options: dict[str, Any] = {}
+        self._section: str = ""
+
+    def _current(self) -> dict[str, Any]:
+        merged = dict(self._entry.data)
+        merged.update(self._entry.options or {})
+        return merged
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
+        """Menu — pick which section to reconfigure."""
+        if user_input is not None:
+            self._section = user_input["section"]
+            if self._section == "jellyfin":
+                return await self.async_step_jellyfin()
+            if self._section == "ai":
+                return await self.async_step_ai_provider()
+            if self._section == "tv":
+                return await self.async_step_tv()
+            return await self.async_step_nav()
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({
+                vol.Required("section"): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            {"value": "jellyfin", "label": "Jellyfin Connection"},
+                            {"value": "ai", "label": "AI Provider"},
+                            {"value": "tv", "label": "TV Device"},
+                            {"value": "nav", "label": "Navigation & Button"},
+                        ],
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                ),
+            }),
+        )
+
+    async def async_step_jellyfin(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Reconfigure Jellyfin connection."""
+        errors: dict[str, str] = {}
+        description_placeholders: dict[str, str] = {}
+        current = self._current()
+
+        if user_input is not None:
+            from .jellyfin.client import JellyfinClient
+            from .jellyfin.auth import JellyfinAuth
+            test_only = user_input.pop("test_connection", False)
+            try:
+                auth = JellyfinAuth(
+                    url=user_input[CONF_JELLYFIN_URL],
+                    api_key=user_input.get(CONF_JELLYFIN_API_KEY, ""),
+                )
+                client = JellyfinClient(auth, verify_ssl=user_input.get(CONF_JELLYFIN_VERIFY_SSL, True), hass=self.hass)
+                await client.async_connect()
+                await client.async_close()
+                if test_only:
+                    description_placeholders["status"] = "✓ Connection successful!"
+                else:
+                    self._options.update(user_input)
+                    return self.async_create_entry(title="", data={**current, **self._options})
+            except Exception as exc:
+                errors["base"] = "cannot_connect"
+                description_placeholders["status"] = f"\n\nError: {exc}"
+
+        return self.async_show_form(
+            step_id="jellyfin",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({
+                    vol.Required(CONF_JELLYFIN_URL): str,
+                    vol.Optional(CONF_JELLYFIN_API_KEY): str,
+                    vol.Optional(CONF_JELLYFIN_VERIFY_SSL): bool,
+                    vol.Optional("test_connection", default=False): bool,
+                }),
+                {
+                    CONF_JELLYFIN_URL: current.get(CONF_JELLYFIN_URL, "http://localhost:8096"),
+                    CONF_JELLYFIN_API_KEY: current.get(CONF_JELLYFIN_API_KEY, ""),
+                    CONF_JELLYFIN_VERIFY_SSL: current.get(CONF_JELLYFIN_VERIFY_SSL, True),
+                },
+            ),
+            errors=errors,
+            description_placeholders={"status": description_placeholders.get("status", "")},
+        )
+
+    async def async_step_ai_provider(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Pick AI provider."""
+        current = self._current()
+        if user_input is not None:
+            self._options.update(user_input)
+            provider = user_input.get(CONF_AI_PROVIDER)
+            if provider == AI_PROVIDER_OLLAMA:
+                return await self.async_step_ollama()
+            if provider == AI_PROVIDER_OPENAI_COMPAT:
+                return await self.async_step_openai_compat()
+            if provider == AI_PROVIDER_HA_CONVERSATION:
+                return self.async_create_entry(title="", data={**current, **self._options})
+            return await self.async_step_cloud_provider()
+
+        return self.async_show_form(
+            step_id="ai_provider",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({
+                    vol.Required(CONF_AI_PROVIDER): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[{"value": k, "label": v} for k, v in AI_PROVIDER_LABELS.items()],
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    ),
+                }),
+                {CONF_AI_PROVIDER: current.get(CONF_AI_PROVIDER, AI_PROVIDER_HA_CONVERSATION)},
+            ),
+        )
+
+    async def async_step_ollama(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Reconfigure Ollama host/port."""
+        errors: dict[str, str] = {}
+        current = self._current()
+
+        if user_input is not None:
+            try:
+                from .ai.providers.ollama import OllamaProvider
+                models = await OllamaProvider.async_list_models(
+                    host=user_input[CONF_OLLAMA_HOST],
+                    port=user_input[CONF_OLLAMA_PORT],
+                    https=user_input.get(CONF_OLLAMA_HTTPS, False),
+                )
+                self._options.update(user_input)
+                self._options["_ollama_models"] = models
+                return await self.async_step_ollama_model()
+            except Exception as exc:
+                errors["base"] = "cannot_connect"
+                _LOGGER.error("Ollama connection failed: %s", exc)
+
+        return self.async_show_form(
+            step_id="ollama",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({
+                    vol.Required(CONF_OLLAMA_HOST): str,
+                    vol.Required(CONF_OLLAMA_PORT): int,
+                    vol.Optional(CONF_OLLAMA_HTTPS): bool,
+                }),
+                {
+                    CONF_OLLAMA_HOST: current.get(CONF_OLLAMA_HOST, DEFAULT_OLLAMA_HOST),
+                    CONF_OLLAMA_PORT: current.get(CONF_OLLAMA_PORT, DEFAULT_OLLAMA_PORT),
+                    CONF_OLLAMA_HTTPS: current.get(CONF_OLLAMA_HTTPS, False),
+                },
+            ),
+            errors=errors,
+        )
+
+    async def async_step_ollama_model(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Pick Ollama model + advanced options."""
+        current = self._current()
+        if user_input is not None:
+            self._options.update(user_input)
+            return self.async_create_entry(title="", data={**current, **self._options})
+
+        models: list[str] = self._options.get("_ollama_models", [])
+        model_options = [{"value": m, "label": m} for m in models] or [{"value": "llama3", "label": "llama3"}]
+
+        return self.async_show_form(
+            step_id="ollama_model",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({
+                    vol.Required(CONF_OLLAMA_MODEL): selector.SelectSelector(
+                        selector.SelectSelectorConfig(options=model_options, mode=selector.SelectSelectorMode.LIST)
+                    ),
+                    vol.Optional(CONF_OLLAMA_CONTEXT_SIZE): int,
+                    vol.Optional(CONF_OLLAMA_KEEP_ALIVE): str,
+                    vol.Optional(CONF_AI_STREAMING): bool,
+                    vol.Optional(CONF_AI_TIMEOUT): int,
+                }),
+                {
+                    CONF_OLLAMA_MODEL: current.get(CONF_OLLAMA_MODEL, ""),
+                    CONF_OLLAMA_CONTEXT_SIZE: current.get(CONF_OLLAMA_CONTEXT_SIZE, DEFAULT_OLLAMA_CONTEXT_SIZE),
+                    CONF_OLLAMA_KEEP_ALIVE: current.get(CONF_OLLAMA_KEEP_ALIVE, DEFAULT_OLLAMA_KEEP_ALIVE),
+                    CONF_AI_STREAMING: current.get(CONF_AI_STREAMING, True),
+                    CONF_AI_TIMEOUT: current.get(CONF_AI_TIMEOUT, DEFAULT_AI_TIMEOUT),
+                },
+            ),
+        )
+
+    async def async_step_cloud_provider(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        current = self._current()
+        if user_input is not None:
+            self._options.update(user_input)
+            return self.async_create_entry(title="", data={**current, **self._options})
+
+        return self.async_show_form(
+            step_id="cloud_provider",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({
+                    vol.Required(CONF_AI_API_KEY): str,
+                    vol.Optional(CONF_AI_MODEL): str,
+                    vol.Optional(CONF_AI_BASE_URL): str,
+                    vol.Optional(CONF_AI_TEMPERATURE): vol.Coerce(float),
+                    vol.Optional(CONF_AI_MAX_TOKENS): int,
+                    vol.Optional(CONF_AI_STREAMING): bool,
+                    vol.Optional(CONF_AI_TIMEOUT): int,
+                }),
+                {
+                    CONF_AI_API_KEY: current.get(CONF_AI_API_KEY, ""),
+                    CONF_AI_MODEL: current.get(CONF_AI_MODEL, ""),
+                    CONF_AI_BASE_URL: current.get(CONF_AI_BASE_URL, ""),
+                    CONF_AI_TEMPERATURE: current.get(CONF_AI_TEMPERATURE, DEFAULT_AI_TEMPERATURE),
+                    CONF_AI_MAX_TOKENS: current.get(CONF_AI_MAX_TOKENS, DEFAULT_AI_MAX_TOKENS),
+                    CONF_AI_STREAMING: current.get(CONF_AI_STREAMING, True),
+                    CONF_AI_TIMEOUT: current.get(CONF_AI_TIMEOUT, DEFAULT_AI_TIMEOUT),
+                },
+            ),
+        )
+
+    async def async_step_openai_compat(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        current = self._current()
+        if user_input is not None:
+            self._options.update(user_input)
+            return self.async_create_entry(title="", data={**current, **self._options})
+
+        return self.async_show_form(
+            step_id="openai_compat",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({
+                    vol.Required(CONF_AI_BASE_URL): str,
+                    vol.Optional(CONF_AI_API_KEY): str,
+                    vol.Optional(CONF_AI_MODEL): str,
+                    vol.Optional(CONF_AI_STREAMING): bool,
+                    vol.Optional(CONF_AI_TIMEOUT): int,
+                }),
+                {
+                    CONF_AI_BASE_URL: current.get(CONF_AI_BASE_URL, "http://localhost:1234/v1"),
+                    CONF_AI_API_KEY: current.get(CONF_AI_API_KEY, "not-needed"),
+                    CONF_AI_MODEL: current.get(CONF_AI_MODEL, "local-model"),
+                    CONF_AI_STREAMING: current.get(CONF_AI_STREAMING, True),
+                    CONF_AI_TIMEOUT: current.get(CONF_AI_TIMEOUT, DEFAULT_AI_TIMEOUT),
+                },
+            ),
+        )
+
+    async def async_step_tv(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Pick TV type."""
+        current = self._current()
         if user_input is not None:
             self._options.update(user_input)
             tv_type = user_input.get(CONF_TV_TYPE, TV_TYPE_NONE)
@@ -403,11 +654,10 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                 return await self.async_step_apple_tv()
             if tv_type == TV_TYPE_ANDROID:
                 return await self.async_step_android_tv()
-            return await self.async_step_nav()
+            return self.async_create_entry(title="", data={**current, **self._options})
 
-        current = self._entry.options or self._entry.data
         return self.async_show_form(
-            step_id="init",
+            step_id="tv",
             data_schema=self.add_suggested_values_to_schema(
                 vol.Schema({
                     vol.Required(CONF_TV_TYPE): selector.SelectSelector(
@@ -428,11 +678,11 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
     async def async_step_apple_tv(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
+        current = self._current()
         if user_input is not None:
             self._options.update(user_input)
-            return await self.async_step_nav()
+            return self.async_create_entry(title="", data={**current, **self._options})
 
-        current = self._entry.options or self._entry.data
         return self.async_show_form(
             step_id="apple_tv",
             data_schema=self.add_suggested_values_to_schema(
@@ -452,11 +702,11 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
     async def async_step_android_tv(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
+        current = self._current()
         if user_input is not None:
             self._options.update(user_input)
-            return await self.async_step_nav()
+            return self.async_create_entry(title="", data={**current, **self._options})
 
-        current = self._entry.options or self._entry.data
         return self.async_show_form(
             step_id="android_tv",
             data_schema=self.add_suggested_values_to_schema(
@@ -480,11 +730,11 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
     async def async_step_nav(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
+        current = self._current()
         if user_input is not None:
             self._options.update(user_input)
-            return self.async_create_entry(title="", data=self._options)
+            return self.async_create_entry(title="", data={**current, **self._options})
 
-        current = self._entry.options or self._entry.data
         return self.async_show_form(
             step_id="nav",
             data_schema=self.add_suggested_values_to_schema(
