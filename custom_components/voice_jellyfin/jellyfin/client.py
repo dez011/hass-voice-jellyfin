@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import logging
-import ssl
 from typing import Any, Optional
 
 import aiohttp
-from homeassistant.helpers.aiohttp_client import async_get_clientsession, async_create_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .auth import JellyfinAuth
 from .models import Library, MediaItem, PlaybackSession
@@ -33,16 +32,15 @@ class JellyfinClient:
                 self._session = async_create_clientsession(
                     self._hass,
                     verify_ssl=self._verify_ssl,
-                    headers=self._auth.auth_headers(),
                 )
             else:
                 connector = aiohttp.TCPConnector(ssl=None if self._verify_ssl else False)
-                self._session = aiohttp.ClientSession(
-                    headers=self._auth.auth_headers(),
-                    raise_for_status=True,
-                    connector=connector,
-                )
+                self._session = aiohttp.ClientSession(connector=connector)
         return self._session
+
+    def _h(self) -> dict[str, str]:
+        """Auth headers passed per-request."""
+        return self._auth.auth_headers()
 
     async def async_connect(self) -> dict[str, Any]:
         """Verify server reachability AND API key validity."""
@@ -63,7 +61,7 @@ class JellyfinClient:
         # 2. API key valid? (auth required)
         sessions_url = f"{base}/Sessions"
         try:
-            async with session.get(sessions_url, raise_for_status=False) as resp:
+            async with session.get(sessions_url, headers=self._h(), raise_for_status=False) as resp:
                 if resp.status == 401:
                     raise PermissionError("API key is invalid or missing — check Jellyfin Dashboard → API Keys")
                 if resp.status >= 400:
@@ -88,21 +86,17 @@ class JellyfinClient:
     # ------------------------------------------------------------------
 
     async def async_get_libraries(self) -> list[Library]:
-        """GET /Library/VirtualFolders → list of Library objects."""
         session = self._get_session()
         url = f"{self._auth.base_url()}/Library/VirtualFolders"
-        async with session.get(url) as resp:
-            data = await resp.json()
+        async with session.get(url, headers=self._h()) as resp:
+            data = await resp.json(content_type=None)
         return [Library.from_api(item) for item in (data or [])]
 
     # ------------------------------------------------------------------
     # Search / browse
     # ------------------------------------------------------------------
 
-    async def async_search(
-        self, query: str, limit: int = 20
-    ) -> list[MediaItem]:
-        """Search items by name (fuzzy-ish via Jellyfin's search API)."""
+    async def async_search(self, query: str, limit: int = 20) -> list[MediaItem]:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Items"
         params = {
@@ -113,83 +107,49 @@ class JellyfinClient:
             "Fields": "Genres,ImageTags",
             "EnableImages": "true",
         }
-        async with session.get(url, params=params) as resp:
-            data = await resp.json()
+        async with session.get(url, params=params, headers=self._h()) as resp:
+            data = await resp.json(content_type=None)
         items = data.get("Items", [])
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in items]
 
-    async def async_get_recently_added(
-        self, library_id: Optional[str] = None, limit: int = 20
-    ) -> list[MediaItem]:
-        """Return recently-added media items."""
+    async def async_get_recently_added(self, library_id: Optional[str] = None, limit: int = 20) -> list[MediaItem]:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Items/Latest"
-        params: dict[str, Any] = {
-            "Limit": limit,
-            "Fields": "Genres,ImageTags",
-            "EnableImages": "true",
-        }
+        params: dict[str, Any] = {"Limit": limit, "Fields": "Genres,ImageTags", "EnableImages": "true"}
         if library_id:
             params["ParentId"] = library_id
-        async with session.get(url, params=params) as resp:
-            data = await resp.json()
+        async with session.get(url, params=params, headers=self._h()) as resp:
+            data = await resp.json(content_type=None)
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in (data or [])]
 
-    async def async_get_resume_items(
-        self, user_id: str, limit: int = 10
-    ) -> list[MediaItem]:
-        """GET /Users/{user_id}/Items/Resume — in-progress items."""
+    async def async_get_resume_items(self, user_id: str, limit: int = 10) -> list[MediaItem]:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Users/{user_id}/Items/Resume"
-        params = {
-            "Limit": limit,
-            "Fields": "Genres,ImageTags",
-            "EnableImages": "true",
-            "MediaTypes": "Video",
-        }
-        async with session.get(url, params=params) as resp:
-            data = await resp.json()
+        params = {"Limit": limit, "Fields": "Genres,ImageTags", "EnableImages": "true", "MediaTypes": "Video"}
+        async with session.get(url, params=params, headers=self._h()) as resp:
+            data = await resp.json(content_type=None)
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in data.get("Items", [])]
 
-    async def async_get_favorites(
-        self, user_id: str, limit: int = 50
-    ) -> list[MediaItem]:
-        """Return items marked as favourite by the user."""
+    async def async_get_favorites(self, user_id: str, limit: int = 50) -> list[MediaItem]:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Users/{user_id}/Items"
-        params = {
-            "IsFavorite": "true",
-            "Recursive": "true",
-            "Limit": limit,
-            "Fields": "Genres,ImageTags",
-            "EnableImages": "true",
-        }
-        async with session.get(url, params=params) as resp:
-            data = await resp.json()
+        params = {"IsFavorite": "true", "Recursive": "true", "Limit": limit, "Fields": "Genres,ImageTags", "EnableImages": "true"}
+        async with session.get(url, params=params, headers=self._h()) as resp:
+            data = await resp.json(content_type=None)
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in data.get("Items", [])]
 
-    async def async_get_by_genre(
-        self, genre: str, library_id: Optional[str] = None
-    ) -> list[MediaItem]:
-        """Return items matching a genre, optionally scoped to a library."""
+    async def async_get_by_genre(self, genre: str, library_id: Optional[str] = None) -> list[MediaItem]:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Items"
-        params: dict[str, Any] = {
-            "Genres": genre,
-            "Recursive": "true",
-            "Fields": "Genres,ImageTags",
-            "EnableImages": "true",
-            "SortBy": "Random",
-            "Limit": 50,
-        }
+        params: dict[str, Any] = {"Genres": genre, "Recursive": "true", "Fields": "Genres,ImageTags", "EnableImages": "true", "SortBy": "Random", "Limit": 50}
         if library_id:
             params["ParentId"] = library_id
-        async with session.get(url, params=params) as resp:
-            data = await resp.json()
+        async with session.get(url, params=params, headers=self._h()) as resp:
+            data = await resp.json(content_type=None)
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in data.get("Items", [])]
 
@@ -198,45 +158,35 @@ class JellyfinClient:
     # ------------------------------------------------------------------
 
     async def async_get_sessions(self) -> list[PlaybackSession]:
-        """GET /Sessions → list of active playback sessions."""
         session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions"
-        async with session.get(url) as resp:
-            data = await resp.json()
+        async with session.get(url, headers=self._h()) as resp:
+            data = await resp.json(content_type=None)
         base = self._auth.base_url()
         return [PlaybackSession.from_api(s, base) for s in (data or [])]
 
     async def async_play(self, session_id: str, item_id: str) -> None:
-        """POST /Sessions/{session_id}/Playing — start playback of an item."""
         session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing"
-        params = {
-            "playCommand": "PlayNow",
-            "itemIds": item_id,
-        }
-        async with session.post(url, params=params) as resp:
+        params = {"playCommand": "PlayNow", "itemIds": item_id}
+        async with session.post(url, params=params, headers=self._h()) as resp:
             await resp.read()
         _LOGGER.debug("Play command sent: session=%s item=%s", session_id, item_id)
 
     async def async_pause(self, session_id: str) -> None:
-        """POST /Sessions/{session_id}/Playing/Unpause — toggle pause."""
         session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing/Unpause"
-        async with session.post(url) as resp:
+        async with session.post(url, headers=self._h()) as resp:
             await resp.read()
 
     async def async_stop(self, session_id: str) -> None:
-        """DELETE /Sessions/{session_id}/Playing — stop playback."""
         session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing"
-        async with session.delete(url) as resp:
+        async with session.delete(url, headers=self._h()) as resp:
             await resp.read()
 
     async def async_resume(self, user_id: str) -> Optional[str]:
-        """Resume the first in-progress item on the active session.
-
-        Returns the item name if playback was started, else None.
-        """
+        """Resume the first in-progress item on the active session."""
         items = await self.async_get_resume_items(user_id, limit=1)
         if not items:
             _LOGGER.debug("No resume items found for user %s", user_id)
