@@ -5,7 +5,6 @@ import logging
 from typing import Any, Optional
 
 import aiohttp
-from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .auth import JellyfinAuth
 from .models import Library, MediaItem, PlaybackSession
@@ -29,10 +28,8 @@ class JellyfinClient:
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             if self._hass is not None:
-                self._session = async_create_clientsession(
-                    self._hass,
-                    verify_ssl=self._verify_ssl,
-                )
+                from homeassistant.helpers.aiohttp_client import async_create_clientsession
+                self._session = async_create_clientsession(self._hass, verify_ssl=self._verify_ssl)
             else:
                 connector = aiohttp.TCPConnector(ssl=None if self._verify_ssl else False)
                 self._session = aiohttp.ClientSession(connector=connector)
