@@ -45,32 +45,36 @@ class JellyfinClient:
         return self._session
 
     async def async_connect(self) -> dict[str, Any]:
-        """GET /health then /System/Info — raises on failure with detail."""
+        """Verify server reachability AND API key validity."""
         base = self._auth.base_url()
         session = self._get_session()
 
-        # Health check first so we get a clear error if the server is unreachable
-        health_url = f"{base}/health"
-        _LOGGER.info("Checking Jellyfin health at %s", health_url)
-        try:
-            async with session.get(health_url, raise_for_status=False) as resp:
-                _LOGGER.info("Jellyfin /health → HTTP %s", resp.status)
-        except Exception as exc:
-            _LOGGER.error("Jellyfin /health failed: %s", exc)
-            raise
-
-        # Use public endpoint first (no auth needed) to verify server identity
+        # 1. Server reachable? (no auth needed)
         pub_url = f"{base}/System/Info/Public"
-        _LOGGER.info("Connecting to Jellyfin at %s", pub_url)
         try:
-            async with session.get(pub_url) as resp:
-                resp.raise_for_status()
-                data: dict[str, Any] = await resp.json()
+            async with session.get(pub_url, raise_for_status=False) as resp:
+                if resp.status >= 500:
+                    raise aiohttp.ClientResponseError(resp.request_info, resp.history, status=resp.status)
+                data: dict[str, Any] = await resp.json(content_type=None)
         except Exception as exc:
             _LOGGER.error("Jellyfin /System/Info/Public failed: %s", exc)
+            raise ConnectionError(f"Cannot reach Jellyfin at {base}: {exc}") from exc
+
+        # 2. API key valid? (auth required)
+        sessions_url = f"{base}/Sessions"
+        try:
+            async with session.get(sessions_url, raise_for_status=False) as resp:
+                if resp.status == 401:
+                    raise PermissionError("API key is invalid or missing — check Jellyfin Dashboard → API Keys")
+                if resp.status >= 400:
+                    raise aiohttp.ClientResponseError(resp.request_info, resp.history, status=resp.status)
+        except PermissionError:
+            raise
+        except Exception as exc:
+            _LOGGER.error("Jellyfin /Sessions failed: %s", exc)
             raise
 
-        _LOGGER.info("Connected to Jellyfin %s", data.get("Version", "?"))
+        _LOGGER.info("Connected to Jellyfin %s (auth OK)", data.get("Version", "?"))
         return data
 
     async def async_close(self) -> None:

@@ -194,7 +194,8 @@
     },
     "error": {
       "cannot_connect": "Cannot connect — check URL and credentials.",
-      "invalid_auth": "Invalid authentication credentials.",
+      "invalid_auth": "API key is invalid or missing — check Jellyfin Dashboard → API Keys.",
+      "connection_ok": "✓ Connected successfully — server and API key are valid.",
       "unknown": "Unexpected error."
     },
     "abort": {

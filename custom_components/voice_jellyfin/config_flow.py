@@ -99,10 +99,13 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await client.async_connect()
                 await client.async_close()
                 if test_only:
-                    description_placeholders["status"] = "✓ Connection successful!"
+                    errors["base"] = "connection_ok"
                 else:
                     self._data.update(user_input)
                     return await self.async_step_tv_device()
+            except PermissionError as exc:
+                errors["base"] = "invalid_auth"
+                description_placeholders["status"] = f"\n\n{exc}"
             except Exception as exc:
                 errors["base"] = "cannot_connect"
                 description_placeholders["status"] = f"\n\nError: {exc}"
@@ -451,10 +454,13 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                 await client.async_connect()
                 await client.async_close()
                 if test_only:
-                    description_placeholders["status"] = "✓ Connection successful!"
+                    errors["base"] = "connection_ok"
                 else:
                     self._options.update(user_input)
                     return self.async_create_entry(title="", data={**current, **self._options})
+            except PermissionError as exc:
+                errors["base"] = "invalid_auth"
+                description_placeholders["status"] = f"\n\n{exc}"
             except Exception as exc:
                 errors["base"] = "cannot_connect"
                 description_placeholders["status"] = f"\n\nError: {exc}"
