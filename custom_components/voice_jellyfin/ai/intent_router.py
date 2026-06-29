@@ -35,13 +35,13 @@ Valid intents and their params:
 - RESUME      params: user_id (optional string)
 - PAUSE       params: session_id (optional string)
 - STOP        params: session_id (optional string)
-- GO_HOME     params: {}
-- GO_BACK     params: {}
-- NAV_MODE_ON  params: {}
-- NAV_MODE_OFF params: {}
-- REPEAT      params: {}
-- REVERSE     params: {}
-- SELECT      params: {}
+- GO_HOME     params: {{}}
+- GO_BACK     params: {{}}
+- NAV_MODE_ON  params: {{}}
+- NAV_MODE_OFF params: {{}}
+- REPEAT      params: {{}}
+- REVERSE     params: {{}}
+- SELECT      params: {{}}
 - SCROLL      params: direction ("up"|"down"), amount (optional int, default 1)
 
 If you cannot determine the intent, default to SEARCH with the user's words as query.
