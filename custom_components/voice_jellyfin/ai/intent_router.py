@@ -223,17 +223,27 @@ class IntentRouter:
     async def _handle_play(
         self, result: IntentResult, context: AIContext
     ) -> IntentResult:
-        query = result.params.get("query", "")
-        if not query:
+        raw_query = result.params.get("query", "")
+        if not raw_query:
             result.speech_reply = "What would you like to play?"
             return result
 
         if not self._jellyfin:
             return result
 
-        items = await self._jellyfin.async_search(query, limit=5)
+        from ..jellyfin.query_parser import parse_query
+        pq = parse_query(raw_query)
+        _LOGGER.warning("Play parsed: raw=%r query=%r type=%s year=%s genre=%s",
+                        pq.raw, pq.query, pq.type_filter, pq.year, pq.genre_hint)
+
+        items = await self._jellyfin.async_search(
+            pq.query, limit=5,
+            type_filter=pq.type_filter,
+            genre_hint=pq.genre_hint,
+            year=pq.year,
+        )
         if not items:
-            result.speech_reply = f"I couldn't find anything matching '{query}'."
+            result.speech_reply = f"I couldn't find anything matching '{raw_query}'."
             return result
 
         item = items[0]
@@ -251,7 +261,6 @@ class IntentRouter:
             target = await self._jellyfin.async_get_series_play_target(item.id, user_id)
             if target:
                 play_id, start_ticks = target
-            # if no episodes found, fall through and play the series item directly
 
         await self._jellyfin.async_play(session.id, play_id, start_ticks=start_ticks)
         result.media_title = item.name
@@ -261,9 +270,17 @@ class IntentRouter:
     async def _handle_search(
         self, result: IntentResult, context: AIContext
     ) -> IntentResult:
-        query = result.params.get("query", "")
-        if self._jellyfin and query:
-            items = await self._jellyfin.async_search(query, limit=10)
+        raw_query = result.params.get("query", "")
+        if self._jellyfin and raw_query:
+            from ..jellyfin.query_parser import parse_query
+            pq = parse_query(raw_query)
+            items = await self._jellyfin.async_search(
+                pq.query, limit=10,
+                type_filter=pq.type_filter,
+                genre_hint=pq.genre_hint,
+                year=pq.year,
+            )
+            query = pq.query  # use cleaned query in replies
             if items:
                 titles = ", ".join(i.name for i in items[:5])
                 result.speech_reply = (

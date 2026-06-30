@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from .models import MediaItem
@@ -53,23 +53,35 @@ class JellyfinCatalog:
             ),
         )
 
-    def search(self, query: str, limit: int = 20) -> list["MediaItem"]:
+    def search(
+        self,
+        query: str,
+        limit: int = 20,
+        type_filter: "Optional[str]" = None,
+        genre_hint: "Optional[str]" = None,
+        year: "Optional[int]" = None,
+    ) -> list["MediaItem"]:
         if not self._entries:
             return []
         query_lower = query.strip().lower()
         query_tokens = _tokenize(query_lower)
         scored: list[tuple[float, "MediaItem"]] = []
         for entry in self._entries:
+            if type_filter and entry.item.type != type_filter:
+                continue
+            if year and entry.item.year != year:
+                continue
+            if genre_hint and genre_hint not in entry.item.genres:
+                continue
             score = _score(query_lower, query_tokens, entry)
             if score > 0:
                 scored.append((score, entry.item))
         scored.sort(key=lambda x: x[0], reverse=True)
         results = [item for _, item in scored[:limit]]
         _LOGGER.warning(
-            "Catalog search query=%r → %d hits: %s",
-            query,
-            len(results),
-            [i.name for i in results[:5]],
+            "Catalog search query=%r type=%s year=%s genre=%s → %d hits: %s",
+            query, type_filter, year, genre_hint,
+            len(results), [i.name for i in results[:5]],
         )
         return results
 

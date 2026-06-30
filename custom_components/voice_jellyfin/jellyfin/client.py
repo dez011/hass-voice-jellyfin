@@ -98,37 +98,45 @@ class JellyfinClient:
     # Search / browse
     # ------------------------------------------------------------------
 
-    async def async_search(self, query: str, limit: int = 20) -> list[MediaItem]:
+    async def async_search(
+        self,
+        query: str,
+        limit: int = 20,
+        type_filter: Optional[str] = None,
+        genre_hint: Optional[str] = None,
+        year: Optional[int] = None,
+    ) -> list[MediaItem]:
         """Search using local catalog (if built) with API fallback."""
         if self._catalog is not None and self._catalog.size > 0:
-            return self._catalog.search(query, limit)
-        return await self._api_search(query, limit)
+            return self._catalog.search(query, limit, type_filter=type_filter, genre_hint=genre_hint, year=year)
+        return await self._api_search(query, limit, type_filter=type_filter)
 
-    async def _api_search(self, query: str, limit: int) -> list[MediaItem]:
+    async def _api_search(self, query: str, limit: int, type_filter: Optional[str] = None) -> list[MediaItem]:
         """Multi-pass Jellyfin API search used before catalog is ready."""
+        item_types = type_filter or "Movie,Series,Episode,Audio,MusicAlbum"
         stop = frozenset({"the", "a", "an", "of", "and", "in", "on", "at", "to", "is"})
-        items = await self._search_term(query, limit)
-        _LOGGER.warning("Jellyfin API search pass1 query=%r → %d results: %s",
-                        query, len(items), [i.get("Name") for i in items[:5]])
+        items = await self._search_term(query, limit, item_types)
+        _LOGGER.warning("Jellyfin API search pass1 query=%r type=%s → %d results: %s",
+                        query, type_filter, len(items), [i.get("Name") for i in items[:5]])
         if not items:
             words = [w for w in query.lower().split() if w not in stop and len(w) > 2]
             seen: dict[str, Any] = {}
             for word in words:
-                for item in await self._search_term(word, limit):
+                for item in await self._search_term(word, limit, item_types):
                     seen.setdefault(item["Id"], item)
             items = list(seen.values())[:limit]
             _LOGGER.warning("Jellyfin API search pass2 words=%r → %d results", words, len(items))
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in items]
 
-    async def _search_term(self, term: str, limit: int) -> list[dict]:
+    async def _search_term(self, term: str, limit: int, item_types: str = "Movie,Series,Episode,Audio,MusicAlbum") -> list[dict]:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Items"
         params = {
             "SearchTerm": term,
             "Limit": limit,
             "Recursive": "true",
-            "IncludeItemTypes": "Movie,Series,Episode,Audio,MusicAlbum",
+            "IncludeItemTypes": item_types,
             "Fields": "Genres,ImageTags",
             "EnableImages": "true",
         }
