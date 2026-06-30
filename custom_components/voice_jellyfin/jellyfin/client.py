@@ -154,6 +154,58 @@ class JellyfinClient:
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in (data or [])]
 
+    async def async_get_series_play_target(self, series_id: str, user_id: str) -> Optional[tuple[str, int]]:
+        """Return (episode_id, resume_ticks) for the best episode to play next.
+
+        Priority:
+          1. In-progress episode for this series (resume mid-episode)
+          2. NextUp episode (first unwatched after last completed)
+          3. First episode of the series (S1E1)
+        Returns None if no episodes found.
+        """
+        session = self._get_session()
+        base = self._auth.base_url()
+
+        # 1. In-progress episode
+        resume_url = f"{base}/Users/{user_id}/Items/Resume"
+        async with session.get(resume_url, params={
+            "ParentId": series_id, "Limit": 1, "MediaTypes": "Video",
+        }, headers=self._h()) as resp:
+            resume_data = await resp.json(content_type=None)
+        resume_items = resume_data.get("Items", [])
+        if resume_items:
+            ep = resume_items[0]
+            ticks = ep.get("UserData", {}).get("PlaybackPositionTicks", 0)
+            _LOGGER.warning("Series play target: resuming %r at tick %d", ep.get("Name"), ticks)
+            return ep["Id"], ticks
+
+        # 2. NextUp
+        nextup_url = f"{base}/Shows/NextUp"
+        async with session.get(nextup_url, params={
+            "SeriesId": series_id, "UserId": user_id, "Limit": 1,
+            "Fields": "UserData",
+        }, headers=self._h()) as resp:
+            nextup_data = await resp.json(content_type=None)
+        nextup_items = nextup_data.get("Items", [])
+        if nextup_items:
+            ep = nextup_items[0]
+            _LOGGER.warning("Series play target: next up %r", ep.get("Name"))
+            return ep["Id"], 0
+
+        # 3. First episode
+        ep1_url = f"{base}/Shows/{series_id}/Episodes"
+        async with session.get(ep1_url, params={
+            "UserId": user_id, "Limit": 1, "SortBy": "SortName",
+        }, headers=self._h()) as resp:
+            ep1_data = await resp.json(content_type=None)
+        ep1_items = ep1_data.get("Items", [])
+        if ep1_items:
+            ep = ep1_items[0]
+            _LOGGER.warning("Series play target: first episode %r", ep.get("Name"))
+            return ep["Id"], 0
+
+        return None
+
     async def async_get_resume_items(self, user_id: str, limit: int = 10) -> list[MediaItem]:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Users/{user_id}/Items/Resume"
@@ -197,13 +249,15 @@ class JellyfinClient:
         base = self._auth.base_url()
         return [PlaybackSession.from_api(s, base) for s in (data or [])]
 
-    async def async_play(self, session_id: str, item_id: str) -> None:
+    async def async_play(self, session_id: str, item_id: str, start_ticks: int = 0) -> None:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing"
-        params = {"playCommand": "PlayNow", "itemIds": item_id}
+        params: dict[str, Any] = {"playCommand": "PlayNow", "itemIds": item_id}
+        if start_ticks:
+            params["startPositionTicks"] = start_ticks
         async with session.post(url, params=params, headers=self._h()) as resp:
             await resp.read()
-        _LOGGER.debug("Play command sent: session=%s item=%s", session_id, item_id)
+        _LOGGER.debug("Play command sent: session=%s item=%s ticks=%d", session_id, item_id, start_ticks)
 
     async def async_pause(self, session_id: str) -> None:
         session = self._get_session()

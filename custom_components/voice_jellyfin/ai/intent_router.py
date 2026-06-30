@@ -228,22 +228,34 @@ class IntentRouter:
             result.speech_reply = "What would you like to play?"
             return result
 
-        if self._jellyfin:
-            items = await self._jellyfin.async_search(query, limit=5)
-            if items:
-                item = items[0]
-                sessions = await self._jellyfin.async_get_sessions()
-                session = next(iter(sessions), None)
-                if session:
-                    await self._jellyfin.async_play(session.id, item.id)
-                    result.media_title = item.name
-                    result.speech_reply = (
-                        result.speech_reply or f"Playing {item.name}."
-                    )
-                else:
-                    result.speech_reply = "No active player session found."
-            else:
-                result.speech_reply = f"I couldn't find anything matching '{query}'."
+        if not self._jellyfin:
+            return result
+
+        items = await self._jellyfin.async_search(query, limit=5)
+        if not items:
+            result.speech_reply = f"I couldn't find anything matching '{query}'."
+            return result
+
+        item = items[0]
+        sessions = await self._jellyfin.async_get_sessions()
+        session = next(iter(sessions), None)
+        if not session:
+            result.speech_reply = "No active player session found."
+            return result
+
+        play_id = item.id
+        start_ticks = 0
+
+        if item.type == "Series":
+            user_id = self._jellyfin._auth.user_id or ""
+            target = await self._jellyfin.async_get_series_play_target(item.id, user_id)
+            if target:
+                play_id, start_ticks = target
+            # if no episodes found, fall through and play the series item directly
+
+        await self._jellyfin.async_play(session.id, play_id, start_ticks=start_ticks)
+        result.media_title = item.name
+        result.speech_reply = result.speech_reply or f"Playing {item.name}."
         return result
 
     async def _handle_search(
