@@ -113,7 +113,8 @@
             "jellyfin_url": "Jellyfin URL",
             "jellyfin_api_key": "API Key",
             "jellyfin_verify_ssl": "Verify SSL certificate",
-            "test_connection": "Test connection (don't save)"
+            "test_connection": "Test connection (don't save)",
+            "catalog_reindex_interval": "Catalog re-index schedule"
           }
         },
         "ai_provider": {

@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import timedelta
-from typing import Any
+from typing import Any, Optional
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -24,6 +24,8 @@ from .const import (
     CONF_APPLE_TV_ENTITY,
     TV_TYPE_APPLE,
     TV_TYPE_ANDROID,
+    CONF_CATALOG_REINDEX_INTERVAL,
+    DEFAULT_CATALOG_REINDEX_INTERVAL,
 )
 
 _LOGGER = logging.getLogger(LOGGER_NAME)
@@ -49,6 +51,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_media: str = ""
         self._current_provider_label: str = ""
         self._current_device: str = ""
+        self._reindex_unsub: Optional[Any] = None
 
     async def async_setup(self) -> None:
         """Initialize all sub-components."""
@@ -101,6 +104,10 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.button_trigger = ButtonTrigger(self.hass, button_entity, self)
             await self.button_trigger.async_attach()
 
+        # Catalog — build immediately, then schedule periodic re-index
+        await self.async_reindex_catalog()
+        self._schedule_reindex(config)
+
         await self.async_refresh()
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -122,6 +129,32 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._connected = False
             raise UpdateFailed(f"Jellyfin unreachable: {err}") from err
         return {}
+
+    async def async_reindex_catalog(self) -> None:
+        """Fetch all Movies and Series from Jellyfin and rebuild the local search catalog."""
+        if not self.jellyfin_client:
+            return
+        try:
+            _LOGGER.warning("Starting Jellyfin catalog re-index...")
+            await self.jellyfin_client.async_build_catalog()
+            _LOGGER.warning("Jellyfin catalog re-index complete.")
+        except Exception as err:
+            _LOGGER.error("Catalog re-index failed: %s", err)
+
+    def _schedule_reindex(self, config: dict[str, Any]) -> None:
+        """Set up a periodic catalog re-index timer (cancels any existing one)."""
+        from homeassistant.helpers.event import async_track_time_interval
+        if self._reindex_unsub:
+            self._reindex_unsub()
+            self._reindex_unsub = None
+        interval_hours = config.get(CONF_CATALOG_REINDEX_INTERVAL, DEFAULT_CATALOG_REINDEX_INTERVAL)
+        if interval_hours and interval_hours > 0:
+            async def _reindex(_now: Any) -> None:
+                await self.async_reindex_catalog()
+            self._reindex_unsub = async_track_time_interval(
+                self.hass, _reindex, timedelta(hours=interval_hours)
+            )
+            _LOGGER.warning("Catalog re-index scheduled every %d hour(s)", interval_hours)
 
     async def _async_load_ai_provider(self, config: dict[str, Any]) -> None:
         """Instantiate the configured AI provider."""
@@ -149,6 +182,9 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_shutdown(self) -> None:
         """Clean up connections."""
+        if self._reindex_unsub:
+            self._reindex_unsub()
+            self._reindex_unsub = None
         if self.jellyfin_client:
             await self.jellyfin_client.async_close()
         if self.navigation_mode:

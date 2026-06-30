@@ -23,6 +23,7 @@ from .const import (
     SERVICE_REPEAT_LAST_ACTION,
     SERVICE_GO_HOME,
     SERVICE_GO_BACK,
+    SERVICE_REINDEX_CATALOG,
     KEY_HOME,
     KEY_BACK,
     KEY_SELECT,
@@ -183,6 +184,10 @@ def async_register_services(hass: HomeAssistant) -> None:
             if coordinator.tv_controller:
                 await coordinator.tv_controller.async_send_key(KEY_BACK)
 
+    async def handle_reindex_catalog(call: ServiceCall) -> None:
+        for coordinator in _get_coordinators():
+            await coordinator.async_reindex_catalog()
+
     # ------------------------------------------------------------------
     # Registration
     # ------------------------------------------------------------------
@@ -201,6 +206,7 @@ def async_register_services(hass: HomeAssistant) -> None:
         (SERVICE_REPEAT_LAST_ACTION, handle_repeat, _EMPTY_SCHEMA),
         (SERVICE_GO_HOME, handle_go_home, _EMPTY_SCHEMA),
         (SERVICE_GO_BACK, handle_go_back, _EMPTY_SCHEMA),
+        (SERVICE_REINDEX_CATALOG, handle_reindex_catalog, _EMPTY_SCHEMA),
     ]
 
     for svc_name, handler, schema in _register:

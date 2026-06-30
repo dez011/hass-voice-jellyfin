@@ -105,7 +105,18 @@ DEFAULT_OLLAMA_PORT = 11434
 DEFAULT_OLLAMA_CONTEXT_SIZE = 4096
 DEFAULT_OLLAMA_KEEP_ALIVE = "5m"
 
+CONF_CATALOG_REINDEX_INTERVAL = "catalog_reindex_interval"
+DEFAULT_CATALOG_REINDEX_INTERVAL = 24  # hours; 0 = manual only
+
+CATALOG_REINDEX_OPTIONS = {
+    "Manual only": 0,
+    "Every 6 hours": 6,
+    "Every 12 hours": 12,
+    "Every 24 hours": 24,
+}
+
 # Services
+SERVICE_REINDEX_CATALOG = "reindex_catalog"
 SERVICE_PLAY = "play"
 SERVICE_SEARCH = "search"
 SERVICE_RESUME = "resume"

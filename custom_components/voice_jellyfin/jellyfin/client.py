@@ -20,7 +20,8 @@ class JellyfinClient:
         self._verify_ssl = verify_ssl
         self._hass = hass
         self._session: Optional[aiohttp.ClientSession] = None
-        self._session_owned = False  # True only for sessions we create ourselves
+        self._session_owned = False
+        self._catalog: Optional[Any] = None  # JellyfinCatalog when built
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -97,34 +98,26 @@ class JellyfinClient:
     # Search / browse
     # ------------------------------------------------------------------
 
-    # Words too generic to search on their own
-    _STOP_WORDS = frozenset({"the", "a", "an", "of", "and", "in", "on", "at", "to", "is"})
-
     async def async_search(self, query: str, limit: int = 20) -> list[MediaItem]:
-        """Search Jellyfin with multi-pass fallback.
+        """Search using local catalog (if built) with API fallback."""
+        if self._catalog is not None and self._catalog.size > 0:
+            return self._catalog.search(query, limit)
+        return await self._api_search(query, limit)
 
-        Pass 1: full query as-is.
-        Pass 2 (if 0 results): each significant word individually, merged & deduplicated.
-        """
+    async def _api_search(self, query: str, limit: int) -> list[MediaItem]:
+        """Multi-pass Jellyfin API search used before catalog is ready."""
+        stop = frozenset({"the", "a", "an", "of", "and", "in", "on", "at", "to", "is"})
         items = await self._search_term(query, limit)
-        _LOGGER.warning(
-            "Jellyfin search pass1 query=%r → %d results: %s",
-            query, len(items), [i.get("Name") for i in items[:5]],
-        )
-
+        _LOGGER.warning("Jellyfin API search pass1 query=%r → %d results: %s",
+                        query, len(items), [i.get("Name") for i in items[:5]])
         if not items:
-            words = [w for w in query.lower().split() if w not in self._STOP_WORDS and len(w) > 2]
+            words = [w for w in query.lower().split() if w not in stop and len(w) > 2]
             seen: dict[str, Any] = {}
             for word in words:
-                word_items = await self._search_term(word, limit)
-                _LOGGER.warning(
-                    "Jellyfin search pass2 word=%r → %d results: %s",
-                    word, len(word_items), [i.get("Name") for i in word_items[:5]],
-                )
-                for item in word_items:
+                for item in await self._search_term(word, limit):
                     seen.setdefault(item["Id"], item)
             items = list(seen.values())[:limit]
-
+            _LOGGER.warning("Jellyfin API search pass2 words=%r → %d results", words, len(items))
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in items]
 
@@ -142,6 +135,41 @@ class JellyfinClient:
         async with session.get(url, params=params, headers=self._h()) as resp:
             data = await resp.json(content_type=None)
         return data.get("Items", [])
+
+    async def async_build_catalog(self) -> None:
+        """Fetch all Movies and Series and build the local search catalog."""
+        from .catalog import JellyfinCatalog
+        session = self._get_session()
+        base = self._auth.base_url()
+        url = f"{base}/Items"
+        all_items: list[dict] = []
+        page_size = 500
+        start = 0
+
+        while True:
+            params: dict[str, Any] = {
+                "StartIndex": start,
+                "Limit": page_size,
+                "Recursive": "true",
+                "IncludeItemTypes": "Movie,Series",
+                "Fields": "Genres",
+                "EnableImages": "false",
+                "EnableTotalRecordCount": "true",
+            }
+            async with session.get(url, params=params, headers=self._h()) as resp:
+                data = await resp.json(content_type=None)
+            page = data.get("Items", [])
+            total = data.get("TotalRecordCount", 0)
+            all_items.extend(page)
+            _LOGGER.warning("Catalog fetch: %d/%d", len(all_items), total)
+            if len(all_items) >= total or not page:
+                break
+            start += page_size
+
+        media_items = [MediaItem.from_api(i, base) for i in all_items]
+        catalog = JellyfinCatalog()
+        catalog.build(media_items)
+        self._catalog = catalog
 
     async def async_get_recently_added(self, library_id: Optional[str] = None, limit: int = 20) -> list[MediaItem]:
         session = self._get_session()

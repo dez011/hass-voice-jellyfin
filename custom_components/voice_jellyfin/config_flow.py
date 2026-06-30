@@ -63,6 +63,9 @@ from .const import (
     DEFAULT_OLLAMA_CONTEXT_SIZE,
     DEFAULT_OLLAMA_KEEP_ALIVE,
     NAV_TIMEOUT_OPTIONS,
+    CONF_CATALOG_REINDEX_INTERVAL,
+    DEFAULT_CATALOG_REINDEX_INTERVAL,
+    CATALOG_REINDEX_OPTIONS,
 )
 
 _LOGGER = logging.getLogger(LOGGER_NAME)
@@ -501,6 +504,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                 if test_only:
                     errors["base"] = "connection_ok"
                 else:
+                    user_input[CONF_CATALOG_REINDEX_INTERVAL] = int(user_input.get(CONF_CATALOG_REINDEX_INTERVAL, DEFAULT_CATALOG_REINDEX_INTERVAL))
                     self._options.update(user_input)
                     return self.async_create_entry(title="", data={**current, **self._options})
             except PermissionError as exc:
@@ -518,11 +522,21 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                     vol.Optional(CONF_JELLYFIN_API_KEY): str,
                     vol.Optional(CONF_JELLYFIN_VERIFY_SSL): bool,
                     vol.Optional("test_connection", default=False): bool,
+                    vol.Required(CONF_CATALOG_REINDEX_INTERVAL): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                {"value": str(v), "label": k}
+                                for k, v in CATALOG_REINDEX_OPTIONS.items()
+                            ],
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    ),
                 }),
                 {
                     CONF_JELLYFIN_URL: current.get(CONF_JELLYFIN_URL, "http://localhost:8096"),
                     CONF_JELLYFIN_API_KEY: current.get(CONF_JELLYFIN_API_KEY, ""),
                     CONF_JELLYFIN_VERIFY_SSL: current.get(CONF_JELLYFIN_VERIFY_SSL, True),
+                    CONF_CATALOG_REINDEX_INTERVAL: str(current.get(CONF_CATALOG_REINDEX_INTERVAL, DEFAULT_CATALOG_REINDEX_INTERVAL)),
                 },
             ),
             errors=errors,
