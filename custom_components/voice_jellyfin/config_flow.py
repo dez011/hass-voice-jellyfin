@@ -400,6 +400,8 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         self._entry = entry
         self._options: dict[str, Any] = {}
         self._section: str = ""
+        self._reindex_done: bool = False
+        self._test_results: str = "Enter a query and press Search."
 
     def _current(self) -> dict[str, Any]:
         merged = dict(self._entry.data)
@@ -418,10 +420,10 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                 return await self.async_step_ai_provider()
             if self._section == "tv":
                 return await self.async_step_tv()
-            if self._section == "diagnostics":
-                return await self.async_step_diagnostics()
             if self._section == "reindex":
                 return await self.async_step_reindex()
+            if self._section == "test":
+                return await self.async_step_test()
             return await self.async_step_nav()
 
         return self.async_show_form(
@@ -435,7 +437,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                             {"value": "tv", "label": "TV Device"},
                             {"value": "nav", "label": "Navigation & Button"},
                             {"value": "reindex", "label": "Re-index Media Catalog"},
-                            {"value": "diagnostics", "label": "Diagnostics (test Jellyfin search)"},
+                            {"value": "test", "label": "Search & Playback Test"},
                         ],
                         mode=selector.SelectSelectorMode.LIST,
                     )
@@ -446,76 +448,144 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
     async def async_step_reindex(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Trigger an immediate catalog re-index and report the result."""
-        current = self._current()
-        description_placeholders: dict[str, str] = {}
+        """Trigger a catalog re-index. Loops to show result, second submit closes."""
+        coordinators = list(self.hass.data.get("voice_jellyfin", {}).values())
+        coordinator = coordinators[0] if coordinators else None
+
+        def _catalog_size() -> int:
+            if coordinator and coordinator.jellyfin_client and coordinator.jellyfin_client._catalog:
+                return coordinator.jellyfin_client._catalog.size
+            return 0
 
         if user_input is not None:
-            # User confirmed — run the re-index via the coordinator
-            from homeassistant.helpers import entity_registry as er
-            coordinators = list(self.hass.data.get("voice_jellyfin", {}).values())
-            if coordinators:
-                coordinator = coordinators[0]
+            if self._reindex_done:
+                # second submit — close without saving new options
+                return self.async_create_entry(title="", data={**self._current(), **self._options})
+            # first submit — run re-index
+            if coordinator:
                 try:
                     await coordinator.async_reindex_catalog()
-                    size = coordinator.jellyfin_client._catalog.size if coordinator.jellyfin_client and coordinator.jellyfin_client._catalog else 0
-                    description_placeholders["result"] = f"Done — {size} items indexed."
+                    size = _catalog_size()
+                    status = f"✓ Done — {size} items indexed. Press Submit to close."
                 except Exception as exc:
-                    description_placeholders["result"] = f"Error: {exc}"
+                    status = f"✗ Error: {exc}\n\nPress Submit to close."
             else:
-                description_placeholders["result"] = "No coordinator found."
+                status = "✗ No coordinator found. Is the integration loaded?"
+            self._reindex_done = True
             return self.async_show_form(
                 step_id="reindex",
                 data_schema=vol.Schema({}),
-                description_placeholders=description_placeholders,
+                description_placeholders={"status": status},
             )
 
-        description_placeholders["result"] = "Press Submit to re-index now."
+        self._reindex_done = False
+        size = _catalog_size()
+        status = (
+            f"Catalog currently has {size} items.\n\nPress Submit to re-index now."
+            if size else
+            "Catalog not built yet.\n\nPress Submit to build it now."
+        )
         return self.async_show_form(
             step_id="reindex",
             data_schema=vol.Schema({}),
-            description_placeholders=description_placeholders,
+            description_placeholders={"status": status},
         )
 
-    async def async_step_diagnostics(
+    async def async_step_test(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Search Jellyfin for 'bluey' and display the raw results."""
-        current = self._current()
-        description_placeholders: dict[str, str] = {}
-
-        from .jellyfin.client import JellyfinClient
-        from .jellyfin.auth import JellyfinAuth
-
-        try:
-            auth = JellyfinAuth(
-                url=current[CONF_JELLYFIN_URL],
-                api_key=current.get(CONF_JELLYFIN_API_KEY, ""),
-            )
-            client = JellyfinClient(auth, verify_ssl=current.get(CONF_JELLYFIN_VERIFY_SSL, True), hass=self.hass)
-            items = await client.async_search("bluey", limit=10)
-            await client.async_close()
-
-            if items:
-                lines = [f"{i.name} (id={i.id}, type={getattr(i, 'type', '?')})" for i in items]
-                result_str = "\n".join(lines)
-                _LOGGER.info("Diagnostics: Jellyfin search for 'bluey' returned %d results:\n%s", len(items), result_str)
-                description_placeholders["result"] = f"Found {len(items)} result(s):\n{result_str}"
-            else:
-                _LOGGER.info("Diagnostics: Jellyfin search for 'bluey' returned 0 results")
-                description_placeholders["result"] = "Search returned 0 results."
-
-        except Exception as exc:
-            _LOGGER.error("Diagnostics: Jellyfin search failed: %s", exc)
-            description_placeholders["result"] = f"Error: {exc}"
+        """Interactive search and playback test. Loops until user selects Close."""
+        coordinators = list(self.hass.data.get("voice_jellyfin", {}).values())
+        coordinator = coordinators[0] if coordinators else None
 
         if user_input is not None:
-            return self.async_create_entry(title="", data={**current, **self._options})
+            action = user_input.get("action", "search")
+
+            if action == "close":
+                return self.async_create_entry(title="", data={**self._current(), **self._options})
+
+            query = (user_input.get("query") or "").strip()
+            type_filter = user_input.get("type_filter") or None
+            if type_filter == "all":
+                type_filter = None
+
+            if not query:
+                self._test_results = "⚠ Enter a query first."
+            elif not coordinator or not coordinator.jellyfin_client:
+                self._test_results = "✗ Jellyfin client not available."
+            else:
+                from .jellyfin.query_parser import parse_query as _parse
+                pq = _parse(query)
+                # type_filter from UI overrides parser
+                effective_type = type_filter or pq.type_filter
+                try:
+                    items = await coordinator.jellyfin_client.async_search(
+                        pq.query, limit=8,
+                        type_filter=effective_type,
+                        genre_hint=pq.genre_hint,
+                        year=pq.year,
+                    )
+                    if not items:
+                        self._test_results = f'No results for "{query}".'
+                    elif action == "play":
+                        item = items[0]
+                        sessions = await coordinator.jellyfin_client.async_get_sessions()
+                        session = next(iter(sessions), None)
+                        if not session:
+                            self._test_results = "✗ No active Jellyfin session found."
+                        else:
+                            play_id = item.id
+                            start_ticks = 0
+                            if item.type == "Series":
+                                uid = coordinator.jellyfin_client._auth.user_id or ""
+                                target = await coordinator.jellyfin_client.async_get_series_play_target(item.id, uid)
+                                if target:
+                                    play_id, start_ticks = target
+                            await coordinator.jellyfin_client.async_play(session.id, play_id, start_ticks=start_ticks)
+                            resume_note = f" (resuming at {start_ticks // 10_000_000}s)" if start_ticks else ""
+                            self._test_results = f"▶ Playing: {item.name}{resume_note}"
+                    else:
+                        lines = [
+                            f"{'🎬' if i.type == 'Movie' else '📺'} {i.name}"
+                            f"{f' ({i.year})' if i.year else ''} [{i.type}]"
+                            for i in items
+                        ]
+                        parsed_note = ""
+                        if pq.type_filter or pq.year or pq.genre_hint:
+                            parsed_note = f"\n(parsed: type={pq.type_filter} year={pq.year} genre={pq.genre_hint})"
+                        self._test_results = f"{len(items)} result(s) for \"{query}\"{parsed_note}:\n" + "\n".join(lines)
+                except Exception as exc:
+                    self._test_results = f"✗ Error: {exc}"
 
         return self.async_show_form(
-            step_id="diagnostics",
-            data_schema=vol.Schema({}),
-            description_placeholders=description_placeholders,
+            step_id="test",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({
+                    vol.Optional("query"): str,
+                    vol.Optional("type_filter"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                {"value": "all", "label": "All types"},
+                                {"value": "Movie", "label": "Movies only"},
+                                {"value": "Series", "label": "Shows / Anime only"},
+                            ],
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Required("action"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                {"value": "search", "label": "Search"},
+                                {"value": "play", "label": "Play first result"},
+                                {"value": "close", "label": "Close"},
+                            ],
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    ),
+                }),
+                {"type_filter": "all", "action": "search"},
+            ),
+            description_placeholders={"results": self._test_results},
         )
 
     async def async_step_jellyfin(

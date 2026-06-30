@@ -193,11 +193,16 @@
         },
         "reindex": {
           "title": "Re-index Media Catalog",
-          "description": "{result}"
+          "description": "{status}"
         },
-        "diagnostics": {
-          "title": "Diagnostics — Jellyfin search test",
-          "description": "Search result for 'bluey':\n\n{result}\n\nPress Submit to close."
+        "test": {
+          "title": "Search & Playback Test",
+          "description": "{results}",
+          "data": {
+            "query": "Search query",
+            "type_filter": "Filter by type",
+            "action": "Action"
+          }
         }
       }
     },
