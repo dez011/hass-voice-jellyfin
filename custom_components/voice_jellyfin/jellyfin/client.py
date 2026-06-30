@@ -97,24 +97,51 @@ class JellyfinClient:
     # Search / browse
     # ------------------------------------------------------------------
 
+    # Words too generic to search on their own
+    _STOP_WORDS = frozenset({"the", "a", "an", "of", "and", "in", "on", "at", "to", "is"})
+
     async def async_search(self, query: str, limit: int = 20) -> list[MediaItem]:
+        """Search Jellyfin with multi-pass fallback.
+
+        Pass 1: full query as-is.
+        Pass 2 (if 0 results): each significant word individually, merged & deduplicated.
+        """
+        items = await self._search_term(query, limit)
+        _LOGGER.warning(
+            "Jellyfin search pass1 query=%r → %d results: %s",
+            query, len(items), [i.get("Name") for i in items[:5]],
+        )
+
+        if not items:
+            words = [w for w in query.lower().split() if w not in self._STOP_WORDS and len(w) > 2]
+            seen: dict[str, Any] = {}
+            for word in words:
+                word_items = await self._search_term(word, limit)
+                _LOGGER.warning(
+                    "Jellyfin search pass2 word=%r → %d results: %s",
+                    word, len(word_items), [i.get("Name") for i in word_items[:5]],
+                )
+                for item in word_items:
+                    seen.setdefault(item["Id"], item)
+            items = list(seen.values())[:limit]
+
+        base = self._auth.base_url()
+        return [MediaItem.from_api(i, base) for i in items]
+
+    async def _search_term(self, term: str, limit: int) -> list[dict]:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Items"
         params = {
-            "SearchTerm": query,
+            "SearchTerm": term,
             "Limit": limit,
             "Recursive": "true",
             "IncludeItemTypes": "Movie,Series,Episode,Audio,MusicAlbum",
             "Fields": "Genres,ImageTags",
             "EnableImages": "true",
         }
-        _LOGGER.warning("Jellyfin search request: url=%s query=%r", url, query)
         async with session.get(url, params=params, headers=self._h()) as resp:
             data = await resp.json(content_type=None)
-        items = data.get("Items", [])
-        _LOGGER.warning("Jellyfin search response: status=%s count=%d titles=%s", resp.status, len(items), [i.get("Name") for i in items[:5]])
-        base = self._auth.base_url()
-        return [MediaItem.from_api(i, base) for i in items]
+        return data.get("Items", [])
 
     async def async_get_recently_added(self, library_id: Optional[str] = None, limit: int = 20) -> list[MediaItem]:
         session = self._get_session()
