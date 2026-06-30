@@ -32,6 +32,7 @@ from .const import (
     TV_TYPE_NONE,
     TV_TYPE_ANDROID,
     TV_TYPE_APPLE,
+    CONF_AI_ENABLED,
     CONF_AI_PROVIDER,
     CONF_AI_API_KEY,
     CONF_AI_MODEL,
@@ -414,6 +415,8 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                 return await self.async_step_ai_provider()
             if self._section == "tv":
                 return await self.async_step_tv()
+            if self._section == "diagnostics":
+                return await self.async_step_diagnostics()
             return await self.async_step_nav()
 
         return self.async_show_form(
@@ -426,11 +429,53 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                             {"value": "ai", "label": "AI Provider"},
                             {"value": "tv", "label": "TV Device"},
                             {"value": "nav", "label": "Navigation & Button"},
+                            {"value": "diagnostics", "label": "Diagnostics (test Jellyfin search)"},
                         ],
                         mode=selector.SelectSelectorMode.LIST,
                     )
                 ),
             }),
+        )
+
+    async def async_step_diagnostics(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Search Jellyfin for 'bluey' and display the raw results."""
+        current = self._current()
+        description_placeholders: dict[str, str] = {}
+
+        from .jellyfin.client import JellyfinClient
+        from .jellyfin.auth import JellyfinAuth
+
+        try:
+            auth = JellyfinAuth(
+                url=current[CONF_JELLYFIN_URL],
+                api_key=current.get(CONF_JELLYFIN_API_KEY, ""),
+            )
+            client = JellyfinClient(auth, verify_ssl=current.get(CONF_JELLYFIN_VERIFY_SSL, True), hass=self.hass)
+            items = await client.async_search("bluey", limit=10)
+            await client.async_close()
+
+            if items:
+                lines = [f"{i.name} (id={i.id}, type={getattr(i, 'type', '?')})" for i in items]
+                result_str = "\n".join(lines)
+                _LOGGER.info("Diagnostics: Jellyfin search for 'bluey' returned %d results:\n%s", len(items), result_str)
+                description_placeholders["result"] = f"Found {len(items)} result(s):\n{result_str}"
+            else:
+                _LOGGER.info("Diagnostics: Jellyfin search for 'bluey' returned 0 results")
+                description_placeholders["result"] = "Search returned 0 results."
+
+        except Exception as exc:
+            _LOGGER.error("Diagnostics: Jellyfin search failed: %s", exc)
+            description_placeholders["result"] = f"Error: {exc}"
+
+        if user_input is not None:
+            return self.async_create_entry(title="", data={**current, **self._options})
+
+        return self.async_show_form(
+            step_id="diagnostics",
+            data_schema=vol.Schema({}),
+            description_placeholders=description_placeholders,
         )
 
     async def async_step_jellyfin(
@@ -491,6 +536,8 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         current = self._current()
         if user_input is not None:
             self._options.update(user_input)
+            if not user_input.get(CONF_AI_ENABLED, True):
+                return self.async_create_entry(title="", data={**current, **self._options})
             provider = user_input.get(CONF_AI_PROVIDER)
             if provider == AI_PROVIDER_OLLAMA:
                 return await self.async_step_ollama()
@@ -504,6 +551,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
             step_id="ai_provider",
             data_schema=self.add_suggested_values_to_schema(
                 vol.Schema({
+                    vol.Required(CONF_AI_ENABLED): bool,
                     vol.Required(CONF_AI_PROVIDER): selector.SelectSelector(
                         selector.SelectSelectorConfig(
                             options=[{"value": k, "label": v} for k, v in AI_PROVIDER_LABELS.items()],
@@ -511,7 +559,10 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                         )
                     ),
                 }),
-                {CONF_AI_PROVIDER: current.get(CONF_AI_PROVIDER, AI_PROVIDER_HA_CONVERSATION)},
+                {
+                    CONF_AI_ENABLED: current.get(CONF_AI_ENABLED, False),
+                    CONF_AI_PROVIDER: current.get(CONF_AI_PROVIDER, AI_PROVIDER_HA_CONVERSATION),
+                },
             ),
         )
 

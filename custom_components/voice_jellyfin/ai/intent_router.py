@@ -97,15 +97,23 @@ class IntentRouter:
         text: str,
         provider: Optional[AIProvider],
         context: AIContext,
+        ai_enabled: bool = True,
     ) -> IntentResult:
         """Route *text* through the AI and dispatch the resolved intent.
 
         :param text: Raw voice command text.
         :param provider: Active AIProvider implementation.
         :param context: Shared AIContext for this session.
+        :param ai_enabled: When False, skip AI and fall back to SEARCH.
         :returns: IntentResult with intent, params, reply and media title.
         """
         context.add_turn("user", text)
+
+        if not ai_enabled:
+            _LOGGER.debug("AI disabled; falling back to SEARCH for: %r", text)
+            return await self._dispatch(
+                IntentResult(intent="SEARCH", params={"query": text}), context
+            )
 
         if provider is None:
             _LOGGER.warning("No AI provider configured; defaulting to SEARCH")

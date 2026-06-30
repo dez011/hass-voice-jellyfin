@@ -104,9 +104,11 @@ class JellyfinClient:
             "Fields": "Genres,ImageTags",
             "EnableImages": "true",
         }
+        _LOGGER.debug("Jellyfin search request: url=%s query=%r", url, query)
         async with session.get(url, params=params, headers=self._h()) as resp:
             data = await resp.json(content_type=None)
         items = data.get("Items", [])
+        _LOGGER.debug("Jellyfin search response: status=%s count=%d", resp.status, len(items))
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in items]
 
@@ -157,8 +159,10 @@ class JellyfinClient:
     async def async_get_sessions(self) -> list[PlaybackSession]:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions"
+        _LOGGER.debug("Jellyfin get_sessions request: url=%s", url)
         async with session.get(url, headers=self._h()) as resp:
             data = await resp.json(content_type=None)
+        _LOGGER.debug("Jellyfin get_sessions response: status=%s count=%d", resp.status, len(data or []))
         base = self._auth.base_url()
         return [PlaybackSession.from_api(s, base) for s in (data or [])]
 

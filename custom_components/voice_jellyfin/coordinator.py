@@ -17,6 +17,7 @@ from .const import (
     CONF_JELLYFIN_URL,
     CONF_JELLYFIN_API_KEY,
     CONF_JELLYFIN_VERIFY_SSL,
+    CONF_AI_ENABLED,
     CONF_AI_PROVIDER,
     CONF_TV_TYPE,
     CONF_ANDROID_TV_ENTITY,
@@ -57,8 +58,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         from .navigation.mode import NavigationMode
         from .navigation.trigger import ButtonTrigger
 
-        config = self.entry.data
-        options = self.entry.options
+        config = {**self.entry.data, **(self.entry.options or {})}
 
         # Jellyfin
         auth = JellyfinAuth(
@@ -132,6 +132,8 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Route a natural language command through AI and execute it."""
         from .ai.intent_router import IntentRouter
         self._last_command = text
+        merged_config = {**self.entry.data, **(self.entry.options or {})}
+        ai_enabled = merged_config.get(CONF_AI_ENABLED, False)
         router = IntentRouter(
             jellyfin=self.jellyfin_client,
             tv=self.tv_controller,
@@ -139,7 +141,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass=self.hass,
             tv_type=self.entry.data.get(CONF_TV_TYPE, ""),
         )
-        result = await router.async_route(text, self.ai_provider, self.ai_context)
+        result = await router.async_route(text, self.ai_provider, self.ai_context, ai_enabled=ai_enabled)
         if result.media_title:
             self._last_media = result.media_title
         self.async_set_updated_data(await self._async_update_data())

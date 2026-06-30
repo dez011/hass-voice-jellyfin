@@ -189,6 +189,10 @@
             "nav_confirmation_speech": "Speak Confirmation",
             "button_entity": "Accessibility Button Entity"
           }
+        },
+        "diagnostics": {
+          "title": "Diagnostics — Jellyfin search test",
+          "description": "Search result for 'bluey':\n\n{result}\n\nPress Submit to close."
         }
       }
     },

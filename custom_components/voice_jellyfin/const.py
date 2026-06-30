@@ -25,6 +25,7 @@ TV_TYPE_NONE = "none"
 TV_TYPE_ANDROID = "android_tv"
 TV_TYPE_APPLE = "apple_tv"
 
+CONF_AI_ENABLED = "ai_enabled"
 CONF_AI_PROVIDER = "ai_provider"
 CONF_AI_API_KEY = "ai_api_key"
 CONF_AI_MODEL = "ai_model"
