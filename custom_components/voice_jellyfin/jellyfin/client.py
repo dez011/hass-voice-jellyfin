@@ -20,6 +20,7 @@ class JellyfinClient:
         self._verify_ssl = verify_ssl
         self._hass = hass
         self._session: Optional[aiohttp.ClientSession] = None
+        self._session_owned = False  # True only for sessions we create ourselves
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -30,9 +31,11 @@ class JellyfinClient:
             if self._hass is not None:
                 from homeassistant.helpers.aiohttp_client import async_create_clientsession
                 self._session = async_create_clientsession(self._hass, verify_ssl=self._verify_ssl)
+                self._session_owned = False
             else:
                 connector = aiohttp.TCPConnector(ssl=None if self._verify_ssl else False)
                 self._session = aiohttp.ClientSession(connector=connector)
+                self._session_owned = True
         return self._session
 
     def _h(self) -> dict[str, str]:
@@ -73,10 +76,11 @@ class JellyfinClient:
         return data
 
     async def async_close(self) -> None:
-        """Close the underlying aiohttp session."""
-        if self._session and not self._session.closed:
+        """Close the underlying aiohttp session (only if we own it)."""
+        if self._session_owned and self._session and not self._session.closed:
             await self._session.close()
         self._session = None
+        self._session_owned = False
 
     # ------------------------------------------------------------------
     # Library
@@ -104,11 +108,11 @@ class JellyfinClient:
             "Fields": "Genres,ImageTags",
             "EnableImages": "true",
         }
-        _LOGGER.debug("Jellyfin search request: url=%s query=%r", url, query)
+        _LOGGER.warning("Jellyfin search request: url=%s query=%r", url, query)
         async with session.get(url, params=params, headers=self._h()) as resp:
             data = await resp.json(content_type=None)
         items = data.get("Items", [])
-        _LOGGER.debug("Jellyfin search response: status=%s count=%d", resp.status, len(items))
+        _LOGGER.warning("Jellyfin search response: status=%s count=%d titles=%s", resp.status, len(items), [i.get("Name") for i in items[:5]])
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in items]
 
@@ -159,10 +163,10 @@ class JellyfinClient:
     async def async_get_sessions(self) -> list[PlaybackSession]:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions"
-        _LOGGER.debug("Jellyfin get_sessions request: url=%s", url)
+        _LOGGER.warning("Jellyfin get_sessions request: url=%s", url)
         async with session.get(url, headers=self._h()) as resp:
             data = await resp.json(content_type=None)
-        _LOGGER.debug("Jellyfin get_sessions response: status=%s count=%d", resp.status, len(data or []))
+        _LOGGER.warning("Jellyfin get_sessions response: status=%s count=%d", resp.status, len(data or []))
         base = self._auth.base_url()
         return [PlaybackSession.from_api(s, base) for s in (data or [])]
 
