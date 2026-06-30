@@ -110,9 +110,10 @@ class IntentRouter:
         context.add_turn("user", text)
 
         if not ai_enabled:
-            _LOGGER.debug("AI disabled; falling back to SEARCH for: %r", text)
+            query = self._strip_command_prefix(text)
+            _LOGGER.warning("AI disabled; SEARCH fallback query=%r (raw=%r)", query, text)
             return await self._dispatch(
-                IntentResult(intent="SEARCH", params={"query": text}), context
+                IntentResult(intent="SEARCH", params={"query": query}), context
             )
 
         if provider is None:
@@ -313,3 +314,15 @@ class IntentRouter:
             await self._tv.async_send_key(key)
         else:
             _LOGGER.debug("No TV controller configured; key %s ignored", key)
+
+    _COMMAND_PREFIXES = (
+        "search for ", "search ", "play ", "find ", "look up ",
+        "show me ", "put on ", "watch ",
+    )
+
+    def _strip_command_prefix(self, text: str) -> str:
+        lower = text.lower().strip()
+        for prefix in self._COMMAND_PREFIXES:
+            if lower.startswith(prefix):
+                return text[len(prefix):].strip()
+        return text.strip()
