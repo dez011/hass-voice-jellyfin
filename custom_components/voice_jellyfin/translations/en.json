@@ -191,6 +191,10 @@
             "button_entity": "Accessibility Button Entity"
           }
         },
+        "reindex": {
+          "title": "Re-index Media Catalog",
+          "description": "{result}"
+        },
         "diagnostics": {
           "title": "Diagnostics — Jellyfin search test",
           "description": "Search result for 'bluey':\n\n{result}\n\nPress Submit to close."

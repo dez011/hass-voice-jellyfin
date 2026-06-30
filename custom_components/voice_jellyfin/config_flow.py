@@ -420,6 +420,8 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                 return await self.async_step_tv()
             if self._section == "diagnostics":
                 return await self.async_step_diagnostics()
+            if self._section == "reindex":
+                return await self.async_step_reindex()
             return await self.async_step_nav()
 
         return self.async_show_form(
@@ -432,12 +434,47 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                             {"value": "ai", "label": "AI Provider"},
                             {"value": "tv", "label": "TV Device"},
                             {"value": "nav", "label": "Navigation & Button"},
+                            {"value": "reindex", "label": "Re-index Media Catalog"},
                             {"value": "diagnostics", "label": "Diagnostics (test Jellyfin search)"},
                         ],
                         mode=selector.SelectSelectorMode.LIST,
                     )
                 ),
             }),
+        )
+
+    async def async_step_reindex(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Trigger an immediate catalog re-index and report the result."""
+        current = self._current()
+        description_placeholders: dict[str, str] = {}
+
+        if user_input is not None:
+            # User confirmed — run the re-index via the coordinator
+            from homeassistant.helpers import entity_registry as er
+            coordinators = list(self.hass.data.get("voice_jellyfin", {}).values())
+            if coordinators:
+                coordinator = coordinators[0]
+                try:
+                    await coordinator.async_reindex_catalog()
+                    size = coordinator.jellyfin_client._catalog.size if coordinator.jellyfin_client and coordinator.jellyfin_client._catalog else 0
+                    description_placeholders["result"] = f"Done — {size} items indexed."
+                except Exception as exc:
+                    description_placeholders["result"] = f"Error: {exc}"
+            else:
+                description_placeholders["result"] = "No coordinator found."
+            return self.async_show_form(
+                step_id="reindex",
+                data_schema=vol.Schema({}),
+                description_placeholders=description_placeholders,
+            )
+
+        description_placeholders["result"] = "Press Submit to re-index now."
+        return self.async_show_form(
+            step_id="reindex",
+            data_schema=vol.Schema({}),
+            description_placeholders=description_placeholders,
         )
 
     async def async_step_diagnostics(
