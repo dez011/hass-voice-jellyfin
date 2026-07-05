@@ -100,112 +100,6 @@
         }
       }
     },
-    "options": {
-      "step": {
-        "init": {
-          "title": "What would you like to change?",
-          "data": { "section": "Section" }
-        },
-        "jellyfin": {
-          "title": "Jellyfin Connection",
-          "description": "Update your Jellyfin server URL or API key.{status}",
-          "data": {
-            "jellyfin_url": "Jellyfin URL",
-            "jellyfin_api_key": "API Key",
-            "jellyfin_verify_ssl": "Verify SSL certificate",
-            "test_connection": "Test connection (don't save)",
-            "catalog_reindex_interval": "Catalog re-index schedule"
-          }
-        },
-        "ai_provider": {
-          "title": "AI Provider",
-          "data": { "ai_provider": "Provider" }
-        },
-        "ollama": {
-          "title": "Ollama — Local AI",
-          "description": "Enter your Ollama server address. We'll fetch your installed models.",
-          "data": {
-            "ollama_host": "Host",
-            "ollama_port": "Port",
-            "ollama_https": "Use HTTPS"
-          }
-        },
-        "ollama_model": {
-          "title": "Ollama — Select Model",
-          "data": {
-            "ollama_model": "Model",
-            "ollama_context_size": "Context Size",
-            "ollama_keep_alive": "Keep Alive",
-            "ai_streaming": "Enable Streaming",
-            "ai_timeout": "Timeout (seconds)"
-          }
-        },
-        "cloud_provider": {
-          "title": "Cloud AI Credentials",
-          "data": {
-            "ai_api_key": "API Key",
-            "ai_model": "Model",
-            "ai_base_url": "Base URL (optional)",
-            "ai_temperature": "Temperature",
-            "ai_max_tokens": "Max Tokens",
-            "ai_streaming": "Enable Streaming",
-            "ai_timeout": "Timeout (seconds)"
-          }
-        },
-        "openai_compat": {
-          "title": "OpenAI-Compatible Endpoint",
-          "data": {
-            "ai_base_url": "Base URL",
-            "ai_api_key": "API Key",
-            "ai_model": "Model Name",
-            "ai_streaming": "Enable Streaming",
-            "ai_timeout": "Timeout (seconds)"
-          }
-        },
-        "tv": {
-          "title": "TV Device",
-          "data": { "tv_type": "TV Type" }
-        },
-        "apple_tv": {
-          "title": "Apple TV",
-          "data": {
-            "apple_tv_entity": "Apple TV Remote Entity",
-            "tv_wake_support": "Enable Wake-on-Command"
-          }
-        },
-        "android_tv": {
-          "title": "Android TV / Fire TV",
-          "data": {
-            "android_tv_entity": "Media Player Entity",
-            "adb_host": "ADB Host (optional)",
-            "adb_port": "ADB Port",
-            "tv_wake_support": "Enable Wake-on-Command"
-          }
-        },
-        "nav": {
-          "title": "Navigation & Button",
-          "data": {
-            "nav_wake_phrase": "Wake Phrase",
-            "nav_timeout": "Inactivity Timeout",
-            "nav_confirmation_speech": "Speak Confirmation",
-            "button_entity": "Accessibility Button Entity"
-          }
-        },
-        "reindex": {
-          "title": "Re-index Media Catalog",
-          "description": "{status}"
-        },
-        "test": {
-          "title": "Search & Playback Test",
-          "description": "{results}",
-          "data": {
-            "query": "Search query",
-            "type_filter": "Filter by type",
-            "action": "Action"
-          }
-        }
-      }
-    },
     "error": {
       "cannot_connect": "Cannot connect — check URL and credentials.",
       "invalid_auth": "API key is invalid or missing — check Jellyfin Dashboard → API Keys.",
@@ -214,6 +108,121 @@
     },
     "abort": {
       "already_configured": "Voice Jellyfin is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "What would you like to change?",
+        "data": { "section": "Section" }
+      },
+      "jellyfin": {
+        "title": "Jellyfin Connection",
+        "description": "Update your Jellyfin server URL or API key.{status}",
+        "data": {
+          "jellyfin_url": "Jellyfin URL",
+          "jellyfin_api_key": "API Key",
+          "jellyfin_verify_ssl": "Verify SSL certificate",
+          "test_connection": "Test connection (don't save)",
+          "catalog_reindex_interval": "Catalog re-index schedule"
+        }
+      },
+      "ai_provider": {
+        "title": "AI Provider",
+        "data": {
+          "ai_enabled": "Enable AI",
+          "ai_provider": "Provider"
+        }
+      },
+      "ollama": {
+        "title": "Ollama — Local AI",
+        "description": "Enter your Ollama server address. We'll fetch your installed models.",
+        "data": {
+          "ollama_host": "Host",
+          "ollama_port": "Port",
+          "ollama_https": "Use HTTPS"
+        }
+      },
+      "ollama_model": {
+        "title": "Ollama — Select Model",
+        "data": {
+          "ollama_model": "Model",
+          "ollama_context_size": "Context Size",
+          "ollama_keep_alive": "Keep Alive",
+          "ai_streaming": "Enable Streaming",
+          "ai_timeout": "Timeout (seconds)"
+        }
+      },
+      "cloud_provider": {
+        "title": "Cloud AI Credentials",
+        "data": {
+          "ai_api_key": "API Key",
+          "ai_model": "Model",
+          "ai_base_url": "Base URL (optional)",
+          "ai_temperature": "Temperature",
+          "ai_max_tokens": "Max Tokens",
+          "ai_streaming": "Enable Streaming",
+          "ai_timeout": "Timeout (seconds)"
+        }
+      },
+      "openai_compat": {
+        "title": "OpenAI-Compatible Endpoint",
+        "data": {
+          "ai_base_url": "Base URL",
+          "ai_api_key": "API Key",
+          "ai_model": "Model Name",
+          "ai_streaming": "Enable Streaming",
+          "ai_timeout": "Timeout (seconds)"
+        }
+      },
+      "tv": {
+        "title": "TV Device",
+        "data": { "tv_type": "TV Type" }
+      },
+      "apple_tv": {
+        "title": "Apple TV",
+        "data": {
+          "apple_tv_entity": "Apple TV Remote Entity",
+          "tv_wake_support": "Enable Wake-on-Command"
+        }
+      },
+      "android_tv": {
+        "title": "Android TV / Fire TV",
+        "data": {
+          "android_tv_entity": "Media Player Entity",
+          "adb_host": "ADB Host (optional)",
+          "adb_port": "ADB Port",
+          "tv_wake_support": "Enable Wake-on-Command"
+        }
+      },
+      "nav": {
+        "title": "Navigation & Button",
+        "data": {
+          "nav_wake_phrase": "Wake Phrase",
+          "nav_timeout": "Inactivity Timeout",
+          "nav_confirmation_speech": "Speak Confirmation",
+          "button_entity": "Accessibility Button Entity"
+        }
+      },
+      "reindex": {
+        "title": "Re-index Media Catalog",
+        "description": "{status}"
+      },
+      "test": {
+        "title": "Search & Playback Test",
+        "description": "{results}",
+        "data": {
+          "query": "Search query",
+          "type_filter": "Filter by type",
+          "action": "Action"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect — check URL and credentials.",
+      "invalid_auth": "API key is invalid or missing — check Jellyfin Dashboard → API Keys.",
+      "connection_ok": "✓ Connected successfully — server and API key are valid.",
+      "unknown": "Unexpected error."
     }
   }
 }

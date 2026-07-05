@@ -58,13 +58,14 @@ def hass_with_services(coordinator):
 
 
 @pytest.mark.asyncio
-async def test_all_13_services_registered(hass_with_services):
+async def test_all_services_registered(hass_with_services):
     hass, coordinator, registered = hass_with_services
     expected = {
         "play", "search", "resume", "pause", "stop",
         "navigate", "scroll", "select",
         "navigation_mode_on", "navigation_mode_off",
         "repeat_last_action", "go_home", "go_back",
+        "reindex_catalog",
     }
     registered_names = {svc for domain, svc in registered.keys() if domain == DOMAIN}
     assert registered_names == expected

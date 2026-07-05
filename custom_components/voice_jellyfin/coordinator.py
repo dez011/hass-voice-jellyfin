@@ -104,8 +104,11 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.button_trigger = ButtonTrigger(self.hass, button_entity, self)
             await self.button_trigger.async_attach()
 
-        # Catalog — build immediately, then schedule periodic re-index
-        await self.async_reindex_catalog()
+        # Catalog — build in the background (a large library can take a
+        # while and must not block HA startup), then schedule re-indexing
+        self.hass.async_create_background_task(
+            self.async_reindex_catalog(), name="voice_jellyfin_catalog_index"
+        )
         self._schedule_reindex(config)
 
         await self.async_refresh()
@@ -135,9 +138,9 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self.jellyfin_client:
             return
         try:
-            _LOGGER.warning("Starting Jellyfin catalog re-index...")
+            _LOGGER.info("Starting Jellyfin catalog re-index...")
             await self.jellyfin_client.async_build_catalog()
-            _LOGGER.warning("Jellyfin catalog re-index complete.")
+            _LOGGER.info("Jellyfin catalog re-index complete.")
         except Exception as err:
             _LOGGER.error("Catalog re-index failed: %s", err)
 
@@ -154,7 +157,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._reindex_unsub = async_track_time_interval(
                 self.hass, _reindex, timedelta(hours=interval_hours)
             )
-            _LOGGER.warning("Catalog re-index scheduled every %d hour(s)", interval_hours)
+            _LOGGER.info("Catalog re-index scheduled every %d hour(s)", interval_hours)
 
     async def _async_load_ai_provider(self, config: dict[str, Any]) -> None:
         """Instantiate the configured AI provider."""
@@ -177,7 +180,10 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result = await router.async_route(text, self.ai_provider, self.ai_context, ai_enabled=ai_enabled)
         if result.media_title:
             self._last_media = result.media_title
-        self.async_set_updated_data(await self._async_update_data())
+        try:
+            self.async_set_updated_data(await self._async_update_data())
+        except Exception:
+            _LOGGER.debug("Post-command status refresh failed", exc_info=True)
         return result.speech_reply or "Done."
 
     async def async_shutdown(self) -> None:

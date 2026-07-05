@@ -75,7 +75,9 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the multi-step config flow."""
 
     VERSION = 1
-    _data: dict[str, Any] = {}
+
+    def __init__(self) -> None:
+        self._data: dict[str, Any] = {}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -364,6 +366,7 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Step 6: Optional physical accessibility button entity."""
         if user_input is not None:
             self._data.update(user_input)
+            self._data.pop("_ollama_models", None)
             return self.async_create_entry(
                 title="Voice Jellyfin",
                 data=self._data,
@@ -406,6 +409,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
     def _current(self) -> dict[str, Any]:
         merged = dict(self._entry.data)
         merged.update(self._entry.options or {})
+        merged.pop("_ollama_models", None)  # scrub temp key from older saves
         return merged
 
     async def async_step_init(
@@ -524,6 +528,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                         type_filter=effective_type,
                         genre_hint=pq.genre_hint,
                         year=pq.year,
+                        raw_query=pq.raw,
                     )
                     if not items:
                         self._test_results = f'No results for "{query}".'
@@ -733,6 +738,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         current = self._current()
         if user_input is not None:
             self._options.update(user_input)
+            self._options.pop("_ollama_models", None)
             return self.async_create_entry(title="", data={**current, **self._options})
 
         models: list[str] = self._options.get("_ollama_models", [])

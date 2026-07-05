@@ -44,7 +44,7 @@ class JellyfinCatalog:
             )
             for item in items
         ]
-        _LOGGER.warning(
+        _LOGGER.info(
             "Jellyfin catalog built: %d items indexed (%s)",
             len(self._entries),
             ", ".join(
@@ -78,7 +78,7 @@ class JellyfinCatalog:
                 scored.append((score, entry.item))
         scored.sort(key=lambda x: x[0], reverse=True)
         results = [item for _, item in scored[:limit]]
-        _LOGGER.warning(
+        _LOGGER.debug(
             "Catalog search query=%r type=%s year=%s genre=%s → %d hits: %s",
             query, type_filter, year, genre_hint,
             len(results), [i.name for i in results[:5]],

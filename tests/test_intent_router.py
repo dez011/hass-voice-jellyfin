@@ -47,7 +47,7 @@ async def test_play_intent_calls_async_play():
 
     result = await router.async_route("play Inception", provider, context)
 
-    jellyfin.async_play.assert_called_once_with("sess-001", "item-001")
+    jellyfin.async_play.assert_called_once_with("sess-001", "item-001", start_ticks=0)
     assert result.media_title == "Inception"
     assert result.intent == "PLAY"
 
@@ -84,7 +84,10 @@ async def test_search_intent_calls_async_search():
 
     result = await router.async_route("search the matrix", provider, context)
 
-    jellyfin.async_search.assert_called_once_with("the matrix", limit=10)
+    jellyfin.async_search.assert_called_once_with(
+        "the matrix", limit=10, type_filter=None, genre_hint=None, year=None,
+        raw_query="the matrix",
+    )
     assert result.intent == "SEARCH"
     assert "The Matrix" in result.speech_reply
 
@@ -195,3 +198,59 @@ async def test_ai_failure_falls_back_to_search():
 
     assert result.intent == "SEARCH"
     assert result.speech_reply  # fallback speech exists; exact wording may vary
+
+
+# ---------------------------------------------------------------------------
+# Rule-based routing (AI disabled or no provider)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_ai_disabled_play_command_plays():
+    """With AI off, "play X" must dispatch PLAY, not fall back to SEARCH."""
+    item = MediaItem(id="item-001", name="Inception", type="Movie")
+    session = PlaybackSession(id="sess-001", user_id="user-001", item=item)
+
+    jellyfin = MagicMock()
+    jellyfin.async_search = AsyncMock(return_value=[item])
+    jellyfin.async_get_sessions = AsyncMock(return_value=[session])
+    jellyfin.async_play = AsyncMock()
+
+    router = _make_router(jellyfin=jellyfin)
+    result = await router.async_route(
+        "play Inception", provider=None, context=AIContext(), ai_enabled=False
+    )
+
+    assert result.intent == "PLAY"
+    jellyfin.async_play.assert_called_once_with("sess-001", "item-001", start_ticks=0)
+
+
+@pytest.mark.asyncio
+async def test_ai_disabled_search_command_searches():
+    item = MediaItem(id="item-002", name="The Matrix", type="Movie")
+    jellyfin = MagicMock()
+    jellyfin.async_search = AsyncMock(return_value=[item])
+
+    router = _make_router(jellyfin=jellyfin)
+    result = await router.async_route(
+        "find the matrix", provider=None, context=AIContext(), ai_enabled=False
+    )
+
+    assert result.intent == "SEARCH"
+    assert "The Matrix" in result.speech_reply
+
+
+@pytest.mark.asyncio
+async def test_ai_disabled_pause_command_pauses():
+    item = MediaItem(id="item-001", name="Inception", type="Movie")
+    session = PlaybackSession(id="sess-001", user_id="user-001", item=item)
+    jellyfin = MagicMock()
+    jellyfin.async_get_sessions = AsyncMock(return_value=[session])
+    jellyfin.async_pause = AsyncMock()
+
+    router = _make_router(jellyfin=jellyfin)
+    result = await router.async_route(
+        "pause", provider=None, context=AIContext(), ai_enabled=False
+    )
+
+    assert result.intent == "PAUSE"
+    jellyfin.async_pause.assert_called_once_with("sess-001")

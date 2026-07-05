@@ -17,7 +17,7 @@ Say natural language commands to search, play, resume, and navigate your media �
 - **Physical Accessibility Button** — Assign any HA entity to activate Navigation Mode with a single press
 - **Multiple AI Backends** — Ollama (local/private), OpenAI, Anthropic, Google Gemini, OpenRouter, or HA Conversation
 - **Android TV / ADB Control** — Send key events, launch apps, deep-link to specific Jellyfin items
-- **13 HA Services** — Automate from scripts, blueprints, or voice satellites
+- **14 HA Services** — Automate from scripts, blueprints, or voice satellites
 - **Custom Lovelace Card** — Live status dashboard with command history
 - **Conversation Context** — The AI remembers up to 10 turns for follow-up commands
 
@@ -44,16 +44,15 @@ Full instructions: [docs/installation.md](docs/installation.md)
 
 ## Configuration Flow
 
-The setup wizard guides you through 6 steps — no YAML needed:
+The setup wizard guides you through 5 steps — no YAML needed:
 
 | Step | What you configure |
 |------|--------------------|
-| 1. Network Mode | How HA reaches Jellyfin (local / HTTPS / Tailscale) |
-| 2. Jellyfin | Server URL, API key, default user |
-| 3. Android TV | Media player entity, ADB host/port |
-| 4. AI Provider | Ollama, OpenAI, Anthropic, Gemini, OpenRouter, HA Conversation, or custom |
-| 5. Navigation Mode | Wake phrase, inactivity timeout, TTS confirmation |
-| 6. Accessibility Button | Optional physical trigger entity |
+| 1. Jellyfin | Server URL, API key, SSL verification, connection test |
+| 2. TV Device | Apple TV, Android TV / Fire TV (with ADB), or none |
+| 3. AI Provider | Ollama, OpenAI-compatible, cloud provider, or HA Conversation (AI optional) |
+| 4. Navigation Mode | Wake phrase, inactivity timeout, TTS confirmation |
+| 5. Accessibility Button | Optional physical trigger entity |
 
 Full walkthrough: [docs/configuration.md](docs/configuration.md)
 
@@ -78,6 +77,7 @@ All services are available under the `voice_jellyfin` domain:
 | `voice_jellyfin.repeat_last_action` | Repeat previous key | — |
 | `voice_jellyfin.go_home` | Press Home | — |
 | `voice_jellyfin.go_back` | Press Back | — |
+| `voice_jellyfin.reindex_catalog` | Rebuild the local media search index | — |
 
 ---
 

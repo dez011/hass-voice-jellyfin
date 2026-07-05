@@ -22,10 +22,10 @@ def flow(mock_hass):
 
 @pytest.mark.asyncio
 async def test_step_user_shows_form(flow):
-    """Step 1 (user) with no input should present the networking form."""
+    """Step 1 (user) with no input should present the Jellyfin form."""
     result = await flow.async_step_user()
     assert result["type"] == "form"
-    assert result["step_id"] == "user"
+    assert result["step_id"] == "jellyfin"
 
 
 @pytest.mark.asyncio
@@ -55,9 +55,9 @@ async def test_step_jellyfin_connection_error(flow):
 
 
 @pytest.mark.asyncio
-async def test_step_jellyfin_success_advances_to_android_tv(flow):
-    """A valid Jellyfin connection should advance to the Android TV step."""
-    flow.async_step_android_tv = AsyncMock(return_value={"type": "form", "step_id": "android_tv"})
+async def test_step_jellyfin_success_advances_to_tv_device(flow):
+    """A valid Jellyfin connection should advance to the TV device chooser."""
+    flow.async_step_tv_device = AsyncMock(return_value={"type": "form", "step_id": "tv_device"})
     with patch(
         "custom_components.voice_jellyfin.jellyfin.client.JellyfinClient"
     ) as MockClient:
@@ -66,8 +66,8 @@ async def test_step_jellyfin_success_advances_to_android_tv(flow):
         result = await flow.async_step_jellyfin(
             {"jellyfin_url": "http://localhost:8096", "jellyfin_api_key": "abc"}
         )
-    flow.async_step_android_tv.assert_called_once()
-    assert result["step_id"] == "android_tv"
+    flow.async_step_tv_device.assert_called_once()
+    assert result["step_id"] == "tv_device"
 
 
 @pytest.mark.asyncio
@@ -119,25 +119,36 @@ async def test_step_ollama_connection_failure(flow):
 
 
 @pytest.mark.asyncio
-async def test_step_ollama_success_advances_to_nav_mode(flow):
-    """Successful Ollama step advances to nav_mode."""
-    flow.async_step_nav_mode = AsyncMock(return_value={"type": "form", "step_id": "nav_mode"})
+async def test_step_ollama_success_advances_to_model_picker(flow):
+    """Successful Ollama connection advances to the model picker step."""
+    flow.async_step_ollama_model = AsyncMock(
+        return_value={"type": "form", "step_id": "ollama_model"}
+    )
     with patch(
         "custom_components.voice_jellyfin.ai.providers.ollama.OllamaProvider"
     ) as MockOllama:
         MockOllama.async_list_models = AsyncMock(return_value=["llama3", "mistral"])
         await flow.async_step_ollama(
-            {
-                "ollama_host": "localhost",
-                "ollama_port": 11434,
-                "ollama_https": False,
-                "ollama_model": "llama3",
-                "ollama_context_size": 4096,
-                "ollama_keep_alive": "5m",
-                "ai_streaming": True,
-                "ai_timeout": 15,
-            }
+            {"ollama_host": "localhost", "ollama_port": 11434, "ollama_https": False}
         )
+    flow.async_step_ollama_model.assert_called_once()
+    assert flow._data["_ollama_models"] == ["llama3", "mistral"]
+
+
+@pytest.mark.asyncio
+async def test_step_ollama_model_advances_to_nav_mode(flow):
+    """Picking a model advances to nav_mode."""
+    flow.async_step_nav_mode = AsyncMock(return_value={"type": "form", "step_id": "nav_mode"})
+    flow._data["_ollama_models"] = ["llama3"]
+    await flow.async_step_ollama_model(
+        {
+            "ollama_model": "llama3",
+            "ollama_context_size": 4096,
+            "ollama_keep_alive": "5m",
+            "ai_streaming": True,
+            "ai_timeout": 15,
+        }
+    )
     flow.async_step_nav_mode.assert_called_once()
 
 

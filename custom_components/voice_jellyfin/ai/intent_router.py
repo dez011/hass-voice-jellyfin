@@ -109,18 +109,17 @@ class IntentRouter:
         """
         context.add_turn("user", text)
 
-        if not ai_enabled:
-            query = self._strip_command_prefix(text)
-            _LOGGER.warning("AI disabled; SEARCH fallback query=%r (raw=%r)", query, text)
-            return await self._dispatch(
-                IntentResult(intent="SEARCH", params={"query": query}), context
+        if not ai_enabled or provider is None:
+            result = self._rule_based_intent(text)
+            _LOGGER.debug(
+                "AI %s; rule-based intent=%s params=%s (raw=%r)",
+                "disabled" if not ai_enabled else "provider missing",
+                result.intent, result.params, text,
             )
-
-        if provider is None:
-            _LOGGER.warning("No AI provider configured; defaulting to SEARCH")
-            return await self._dispatch(
-                IntentResult(intent="SEARCH", params={"query": text}), context
-            )
+            result = await self._dispatch(result, context)
+            context.add_turn("assistant", result.speech_reply or "Done.")
+            context.last_action = result.intent
+            return result
 
         try:
             raw = await provider.async_query(
@@ -233,14 +232,15 @@ class IntentRouter:
 
         from ..jellyfin.query_parser import parse_query
         pq = parse_query(raw_query)
-        _LOGGER.warning("Play parsed: raw=%r query=%r type=%s year=%s genre=%s",
-                        pq.raw, pq.query, pq.type_filter, pq.year, pq.genre_hint)
+        _LOGGER.debug("Play parsed: raw=%r query=%r type=%s year=%s genre=%s",
+                      pq.raw, pq.query, pq.type_filter, pq.year, pq.genre_hint)
 
         items = await self._jellyfin.async_search(
             pq.query, limit=5,
             type_filter=pq.type_filter,
             genre_hint=pq.genre_hint,
             year=pq.year,
+            raw_query=pq.raw,
         )
         if not items:
             result.speech_reply = f"I couldn't find anything matching '{raw_query}'."
@@ -279,6 +279,7 @@ class IntentRouter:
                 type_filter=pq.type_filter,
                 genre_hint=pq.genre_hint,
                 year=pq.year,
+                raw_query=pq.raw,
             )
             query = pq.query  # use cleaned query in replies
             if items:
@@ -344,14 +345,26 @@ class IntentRouter:
         else:
             _LOGGER.debug("No TV controller configured; key %s ignored", key)
 
-    _COMMAND_PREFIXES = (
-        "search for ", "search ", "play ", "find ", "look up ",
-        "show me ", "put on ", "watch ",
-    )
+    _PLAY_PREFIXES = ("play ", "put on ", "watch ", "start ")
+    _SEARCH_PREFIXES = ("search for ", "search ", "find ", "look up ", "show me ")
+    _PAUSE_PHRASES = frozenset({"pause", "pause it", "pause playback", "pause the show", "pause the movie"})
+    _STOP_PHRASES = frozenset({"stop", "stop it", "stop playback", "stop playing", "stop the show", "stop the movie"})
+    _RESUME_PHRASES = frozenset({"resume", "continue", "unpause", "keep watching", "continue watching", "resume playback", "resume what i was watching"})
 
-    def _strip_command_prefix(self, text: str) -> str:
-        lower = text.lower().strip()
-        for prefix in self._COMMAND_PREFIXES:
+    def _rule_based_intent(self, text: str) -> IntentResult:
+        """Map a voice command to an intent without an AI provider."""
+        stripped = text.strip()
+        lower = stripped.lower()
+        if lower in self._PAUSE_PHRASES:
+            return IntentResult(intent="PAUSE")
+        if lower in self._STOP_PHRASES:
+            return IntentResult(intent="STOP")
+        if lower in self._RESUME_PHRASES:
+            return IntentResult(intent="RESUME")
+        for prefix in self._PLAY_PREFIXES:
             if lower.startswith(prefix):
-                return text[len(prefix):].strip()
-        return text.strip()
+                return IntentResult(intent="PLAY", params={"query": stripped[len(prefix):].strip()})
+        for prefix in self._SEARCH_PREFIXES:
+            if lower.startswith(prefix):
+                return IntentResult(intent="SEARCH", params={"query": stripped[len(prefix):].strip()})
+        return IntentResult(intent="SEARCH", params={"query": stripped})

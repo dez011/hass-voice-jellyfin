@@ -55,12 +55,11 @@ async def test_async_connect_success(auth):
 
 
 @pytest.mark.asyncio
-async def test_async_connect_raises_on_http_error(auth):
+async def test_async_connect_raises_on_invalid_api_key(auth):
     resp = _mock_response({}, status=401)
-    resp.raise_for_status = MagicMock(side_effect=Exception("401 Unauthorized"))
     with patch("aiohttp.ClientSession", return_value=_mock_session(resp)):
         client = JellyfinClient(auth)
-        with pytest.raises(Exception, match="401"):
+        with pytest.raises(PermissionError, match="API key is invalid"):
             await client.async_connect()
 
 
@@ -128,13 +127,55 @@ async def test_async_play_sends_post(auth):
 
 
 @pytest.mark.asyncio
-async def test_async_stop_sends_delete(auth):
+async def test_async_stop_posts_to_stop_endpoint(auth):
     resp = _mock_response({})
     session = _mock_session(resp)
     with patch("aiohttp.ClientSession", return_value=session):
         client = JellyfinClient(auth)
         await client.async_stop("sess-001")
-    session.delete.assert_called_once()
+    session.post.assert_called_once()
+    assert session.post.call_args[0][0].endswith("/Sessions/sess-001/Playing/Stop")
+
+
+@pytest.mark.asyncio
+async def test_async_pause_posts_to_pause_endpoint(auth):
+    resp = _mock_response({})
+    session = _mock_session(resp)
+    with patch("aiohttp.ClientSession", return_value=session):
+        client = JellyfinClient(auth)
+        await client.async_pause("sess-001")
+    session.post.assert_called_once()
+    assert session.post.call_args[0][0].endswith("/Sessions/sess-001/Playing/Pause")
+
+
+@pytest.mark.asyncio
+async def test_async_unpause_posts_to_unpause_endpoint(auth):
+    resp = _mock_response({})
+    session = _mock_session(resp)
+    with patch("aiohttp.ClientSession", return_value=session):
+        client = JellyfinClient(auth)
+        await client.async_unpause("sess-001")
+    session.post.assert_called_once()
+    assert session.post.call_args[0][0].endswith("/Sessions/sess-001/Playing/Unpause")
+
+
+@pytest.mark.asyncio
+async def test_async_search_falls_back_to_raw_query(auth):
+    """Zero filtered hits should trigger one unfiltered retry with the raw query."""
+    from custom_components.voice_jellyfin.jellyfin.catalog import JellyfinCatalog
+
+    family_guy = MediaItem(id="item-fg", name="Family Guy", type="Series", genres=["Comedy"])
+    catalog = JellyfinCatalog()
+    catalog.build([family_guy])
+
+    client = JellyfinClient(_make_auth())
+    client._catalog = catalog
+
+    # Parser output for "family guy": genre stripped, query mangled
+    items = await client.async_search(
+        "guy", limit=5, genre_hint="Family", raw_query="family guy"
+    )
+    assert [i.name for i in items] == ["Family Guy"]
 
 
 @pytest.mark.asyncio

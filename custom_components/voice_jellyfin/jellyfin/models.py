@@ -15,6 +15,7 @@ class MediaItem:
     year: Optional[int] = None
     genres: list[str] = field(default_factory=list)
     image_url: Optional[str] = None
+    resume_ticks: int = 0  # saved playback position, 100-ns ticks
 
     @classmethod
     def from_api(cls, data: dict, base_url: str = "") -> "MediaItem":
@@ -35,6 +36,7 @@ class MediaItem:
             year=data.get("ProductionYear"),
             genres=data.get("Genres", []),
             image_url=image_url,
+            resume_ticks=(data.get("UserData") or {}).get("PlaybackPositionTicks", 0),
         )
 
 

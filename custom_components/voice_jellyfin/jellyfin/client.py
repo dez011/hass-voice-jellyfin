@@ -105,19 +105,35 @@ class JellyfinClient:
         type_filter: Optional[str] = None,
         genre_hint: Optional[str] = None,
         year: Optional[int] = None,
+        raw_query: Optional[str] = None,
     ) -> list[MediaItem]:
-        """Search using local catalog (if built) with API fallback."""
+        """Search using local catalog (if built) with API fallback.
+
+        If filters produce zero hits, retry once unfiltered with *raw_query*
+        so titles that contain filter keywords ("Family Guy", "TV Patrol")
+        still match.
+        """
         if self._catalog is not None and self._catalog.size > 0:
-            return self._catalog.search(query, limit, type_filter=type_filter, genre_hint=genre_hint, year=year)
-        return await self._api_search(query, limit, type_filter=type_filter)
+            items = self._catalog.search(query, limit, type_filter=type_filter, genre_hint=genre_hint, year=year)
+        else:
+            items = await self._api_search(query, limit, type_filter=type_filter)
+
+        filtered = bool(type_filter or genre_hint or year)
+        if not items and raw_query and (filtered or raw_query.strip().lower() != query.strip().lower()):
+            _LOGGER.debug("Search fallback: retrying unfiltered with raw query %r", raw_query)
+            if self._catalog is not None and self._catalog.size > 0:
+                items = self._catalog.search(raw_query, limit)
+            else:
+                items = await self._api_search(raw_query, limit)
+        return items
 
     async def _api_search(self, query: str, limit: int, type_filter: Optional[str] = None) -> list[MediaItem]:
         """Multi-pass Jellyfin API search used before catalog is ready."""
         item_types = type_filter or "Movie,Series,Episode,Audio,MusicAlbum"
         stop = frozenset({"the", "a", "an", "of", "and", "in", "on", "at", "to", "is"})
         items = await self._search_term(query, limit, item_types)
-        _LOGGER.warning("Jellyfin API search pass1 query=%r type=%s → %d results: %s",
-                        query, type_filter, len(items), [i.get("Name") for i in items[:5]])
+        _LOGGER.debug("Jellyfin API search pass1 query=%r type=%s → %d results: %s",
+                      query, type_filter, len(items), [i.get("Name") for i in items[:5]])
         if not items:
             words = [w for w in query.lower().split() if w not in stop and len(w) > 2]
             seen: dict[str, Any] = {}
@@ -125,7 +141,7 @@ class JellyfinClient:
                 for item in await self._search_term(word, limit, item_types):
                     seen.setdefault(item["Id"], item)
             items = list(seen.values())[:limit]
-            _LOGGER.warning("Jellyfin API search pass2 words=%r → %d results", words, len(items))
+            _LOGGER.debug("Jellyfin API search pass2 words=%r → %d results", words, len(items))
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in items]
 
@@ -169,7 +185,7 @@ class JellyfinClient:
             page = data.get("Items", [])
             total = data.get("TotalRecordCount", 0)
             all_items.extend(page)
-            _LOGGER.warning("Catalog fetch: %d/%d", len(all_items), total)
+            _LOGGER.debug("Catalog fetch: %d/%d", len(all_items), total)
             if len(all_items) >= total or not page:
                 break
             start += page_size
@@ -212,7 +228,7 @@ class JellyfinClient:
         if resume_items:
             ep = resume_items[0]
             ticks = ep.get("UserData", {}).get("PlaybackPositionTicks", 0)
-            _LOGGER.warning("Series play target: resuming %r at tick %d", ep.get("Name"), ticks)
+            _LOGGER.debug("Series play target: resuming %r at tick %d", ep.get("Name"), ticks)
             return ep["Id"], ticks
 
         # 2. NextUp
@@ -225,7 +241,7 @@ class JellyfinClient:
         nextup_items = nextup_data.get("Items", [])
         if nextup_items:
             ep = nextup_items[0]
-            _LOGGER.warning("Series play target: next up %r", ep.get("Name"))
+            _LOGGER.debug("Series play target: next up %r", ep.get("Name"))
             return ep["Id"], 0
 
         # 3. First episode
@@ -237,7 +253,7 @@ class JellyfinClient:
         ep1_items = ep1_data.get("Items", [])
         if ep1_items:
             ep = ep1_items[0]
-            _LOGGER.warning("Series play target: first episode %r", ep.get("Name"))
+            _LOGGER.debug("Series play target: first episode %r", ep.get("Name"))
             return ep["Id"], 0
 
         return None
@@ -278,10 +294,9 @@ class JellyfinClient:
     async def async_get_sessions(self) -> list[PlaybackSession]:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions"
-        _LOGGER.warning("Jellyfin get_sessions request: url=%s", url)
         async with session.get(url, headers=self._h()) as resp:
             data = await resp.json(content_type=None)
-        _LOGGER.warning("Jellyfin get_sessions response: status=%s count=%d", resp.status, len(data or []))
+        _LOGGER.debug("Jellyfin get_sessions: status=%s count=%d", resp.status, len(data or []))
         base = self._auth.base_url()
         return [PlaybackSession.from_api(s, base) for s in (data or [])]
 
@@ -297,14 +312,20 @@ class JellyfinClient:
 
     async def async_pause(self, session_id: str) -> None:
         session = self._get_session()
+        url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing/Pause"
+        async with session.post(url, headers=self._h()) as resp:
+            await resp.read()
+
+    async def async_unpause(self, session_id: str) -> None:
+        session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing/Unpause"
         async with session.post(url, headers=self._h()) as resp:
             await resp.read()
 
     async def async_stop(self, session_id: str) -> None:
         session = self._get_session()
-        url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing"
-        async with session.delete(url, headers=self._h()) as resp:
+        url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing/Stop"
+        async with session.post(url, headers=self._h()) as resp:
             await resp.read()
 
     async def async_resume(self, user_id: str) -> Optional[str]:
@@ -324,5 +345,5 @@ class JellyfinClient:
             return None
 
         item = items[0]
-        await self.async_play(active.id, item.id)
+        await self.async_play(active.id, item.id, start_ticks=item.resume_ticks)
         return item.name

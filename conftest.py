@@ -25,14 +25,36 @@ _ha_const = _make_module("homeassistant.const", Platform=MagicMock(), EVENT_STAT
 # config_entries
 class _ConfigEntry:
     def __init__(self, *a, **kw): pass
+
+
+def _add_suggested_values_to_schema(data_schema, suggested_values):
+    # Mirrors homeassistant.data_entry_flow.FlowHandler (HA 2023.2+)
+    import copy
+    import voluptuous as vol
+    schema = {}
+    for key, val in getattr(data_schema, "schema", {}).items():
+        if isinstance(key, vol.Marker) and suggested_values and key.schema in suggested_values:
+            new_key = copy.copy(key)
+            new_key.description = {"suggested_value": suggested_values[key.schema]}
+            schema[new_key] = val
+        else:
+            schema[key] = val
+    return vol.Schema(schema)
+
+
 class _OptionsFlow:
-    pass
+    def async_show_form(self, **kw): return kw
+    def async_create_entry(self, **kw): return kw
+    def add_suggested_values_to_schema(self, data_schema, suggested_values):
+        return _add_suggested_values_to_schema(data_schema, suggested_values)
 class _ConfigFlow:
     VERSION = 1
     def __init_subclass__(cls, domain=None, **kw):
         super().__init_subclass__(**kw)
     def async_show_form(self, **kw): return kw
     def async_create_entry(self, **kw): return kw
+    def add_suggested_values_to_schema(self, data_schema, suggested_values):
+        return _add_suggested_values_to_schema(data_schema, suggested_values)
 _ce_mod = _make_module(
     "homeassistant.config_entries",
     ConfigEntry=_ConfigEntry,
