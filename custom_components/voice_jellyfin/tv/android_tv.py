@@ -1,6 +1,7 @@
 """High-level Android TV controller built on top of the remote helpers."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -9,8 +10,6 @@ from homeassistant.core import HomeAssistant
 from . import remote
 
 _LOGGER = logging.getLogger(__name__)
-
-_JELLYFIN_PACKAGE = "org.jellyfin.androidtv"
 
 
 class AndroidTVController:
@@ -32,12 +31,8 @@ class AndroidTVController:
     # App launch
     # ------------------------------------------------------------------
 
-    async def async_launch_app(self, package_name: str) -> None:
-        """Launch an installed app by package name.
-
-        Tries media_player.select_source first (works if the integration
-        exposes apps as sources), then falls back to ADB am start.
-        """
+    async def async_launch_app(self, package_name: str) -> bool:
+        """Launch an installed app by package name. Returns True on apparent success."""
         try:
             await self._hass.services.async_call(
                 "media_player",
@@ -45,24 +40,36 @@ class AndroidTVController:
                 {"entity_id": self._entity_id, "source": package_name},
                 blocking=True,
             )
+            return True
         except Exception:
-            await self._adb_command(f"am start -n {package_name}/.MainActivity")
+            pass
+        result = await self._adb_command(f"am start -n {package_name}/.MainActivity")
+        if "error" in result.lower() or "exception" in result.lower():
+            _LOGGER.warning("App launch may have failed for %s: %s", package_name, result)
+            return False
+        return True
 
-    async def async_deep_link(self, uri: str) -> None:
-        """Open a URI using the Android VIEW intent via ADB."""
+    async def async_deep_link(self, uri: str, package: str | None = None) -> bool:
+        """Open a URI using the Android VIEW intent via ADB. Returns True on success."""
         cmd = f"am start -a android.intent.action.VIEW -d '{uri}'"
-        await self._adb_command(cmd)
+        if package:
+            cmd += f" -p {package}"
+        try:
+            result = await self._adb_command(cmd)
+            if "error" in result.lower() or "exception" in result.lower():
+                _LOGGER.warning("Deep link failed for %s: %s", uri, result)
+                return False
+            return True
+        except Exception as exc:
+            _LOGGER.error("Deep link error for %s: %s", uri, exc)
+            return False
 
     # ------------------------------------------------------------------
     # Wake
     # ------------------------------------------------------------------
 
     async def async_wake(self) -> None:
-        """Wake the TV screen.
-
-        Tries androidtv.adb_command WAKEUP first; falls back to
-        media_player.turn_on.
-        """
+        """Send a wake signal to the TV (fire-and-forget — does not wait for boot)."""
         if remote._has_androidtv_service(self._hass):
             try:
                 await self._hass.services.async_call(
@@ -75,7 +82,6 @@ class AndroidTVController:
             except Exception as exc:
                 _LOGGER.debug("WAKEUP via adb_command failed: %s", exc)
 
-        # Fallback: turn_on via media_player
         try:
             await self._hass.services.async_call(
                 "media_player",
@@ -85,6 +91,30 @@ class AndroidTVController:
             )
         except Exception as exc:
             _LOGGER.warning("Wake TV failed: %s", exc)
+
+    async def async_ensure_awake(self, timeout: float = 30.0) -> bool:
+        """Wake the TV and poll until it responds (or timeout). Returns True if awake."""
+        await self.async_wake()
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            state = self._hass.states.get(self._entity_id)
+            if state and state.state not in ("off", "unavailable", "unknown"):
+                return True
+            # Also test ADB responsiveness directly
+            if remote._has_androidtv_service(self._hass):
+                try:
+                    await self._hass.services.async_call(
+                        "androidtv",
+                        "adb_command",
+                        {"entity_id": self._entity_id, "command": "input keyevent 0"},
+                        blocking=True,
+                    )
+                    return True
+                except Exception:
+                    pass
+            await asyncio.sleep(2.0)
+        _LOGGER.warning("TV %s did not become responsive within %.0fs", self._entity_id, timeout)
+        return False
 
     # ------------------------------------------------------------------
     # Internal helpers

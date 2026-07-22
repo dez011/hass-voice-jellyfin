@@ -12,7 +12,13 @@ from ..const import (
     CONF_NAV_TIMEOUT,
     DEFAULT_NAV_TIMEOUT,
     EVENT_NAVIGATION_MODE_CHANGED,
+    EVENT_HOT_MIC_CHANGED,
+    EVENT_HOT_MIC_READY,
     NAV_TIMEOUT_NEVER,
+    CONF_HOT_MIC_PHRASE,
+    CONF_HOT_MIC_TIMEOUT,
+    DEFAULT_HOT_MIC_PHRASE,
+    DEFAULT_HOT_MIC_TIMEOUT,
 )
 from .commands import VOICE_TO_KEY, REPEAT_PATTERNS, REVERSE_PATTERNS
 
@@ -50,6 +56,10 @@ class NavigationMode:
         self._timeout_task: Optional[asyncio.Task] = None
         self._last_key: Optional[str] = None
 
+        # Hot mic state
+        self.hot_mic_active: bool = False
+        self._hot_mic_timeout_task: Optional[asyncio.Task] = None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -68,7 +78,9 @@ class NavigationMode:
         self._reset_timeout()
 
     async def async_deactivate(self) -> None:
-        """Exit Navigation Mode."""
+        """Exit Navigation Mode (and hot mic if active)."""
+        if self.hot_mic_active:
+            await self.async_deactivate_hot_mic()
         if not self.is_active:
             return
         self.is_active = False
@@ -79,13 +91,115 @@ class NavigationMode:
             {"active": False, "entry_id": self._entry.entry_id},
         )
 
+    # ------------------------------------------------------------------
+    # Hot mic
+    # ------------------------------------------------------------------
+
+    async def async_activate_hot_mic(self) -> None:
+        """Enter hot mic mode — all speech routed as commands, silently."""
+        if self.hot_mic_active:
+            self._reset_hot_mic_timeout()
+            return
+        self.hot_mic_active = True
+        _LOGGER.info("Hot mic activated")
+        self._hass.bus.async_fire(
+            EVENT_HOT_MIC_CHANGED,
+            {"active": True, "entry_id": self._entry.entry_id},
+        )
+        self._reset_hot_mic_timeout()
+
+    async def async_deactivate_hot_mic(self) -> None:
+        """Exit hot mic mode."""
+        if not self.hot_mic_active:
+            return
+        self.hot_mic_active = False
+        self._cancel_hot_mic_timeout()
+        _LOGGER.info("Hot mic deactivated")
+        self._hass.bus.async_fire(
+            EVENT_HOT_MIC_CHANGED,
+            {"active": False, "entry_id": self._entry.entry_id},
+        )
+
+    async def async_toggle_hot_mic(self) -> bool:
+        """Toggle hot mic on/off. Returns new state."""
+        if self.hot_mic_active:
+            await self.async_deactivate_hot_mic()
+        else:
+            await self.async_activate_hot_mic()
+        return self.hot_mic_active
+
+    def _get_hot_mic_phrase(self) -> str:
+        raw = (
+            self._entry.options.get(CONF_HOT_MIC_PHRASE)
+            or self._entry.data.get(CONF_HOT_MIC_PHRASE, DEFAULT_HOT_MIC_PHRASE)
+        )
+        return str(raw).lower().strip()
+
+    def _get_hot_mic_timeout(self) -> int:
+        raw = (
+            self._entry.options.get(CONF_HOT_MIC_TIMEOUT)
+            or self._entry.data.get(CONF_HOT_MIC_TIMEOUT, DEFAULT_HOT_MIC_TIMEOUT)
+        )
+        try:
+            return int(raw)
+        except (ValueError, TypeError):
+            return DEFAULT_HOT_MIC_TIMEOUT
+
+    def _reset_hot_mic_timeout(self) -> None:
+        self._cancel_hot_mic_timeout()
+        timeout = self._get_hot_mic_timeout()
+        if timeout > 0:
+            self._hot_mic_timeout_task = self._hass.async_create_task(
+                self._async_hot_mic_timeout_handler(timeout)
+            )
+
+    def _cancel_hot_mic_timeout(self) -> None:
+        if self._hot_mic_timeout_task and not self._hot_mic_timeout_task.done():
+            self._hot_mic_timeout_task.cancel()
+        self._hot_mic_timeout_task = None
+
+    async def _async_hot_mic_timeout_handler(self, delay: int) -> None:
+        try:
+            await asyncio.sleep(delay)
+            _LOGGER.debug("Hot mic timed out after %ds of inactivity", delay)
+            await self.async_deactivate_hot_mic()
+        except asyncio.CancelledError:
+            pass
+
+    # ------------------------------------------------------------------
+    # Command handling
+    # ------------------------------------------------------------------
+
     async def async_handle_command(self, text: str) -> bool:
-        """Handle a navigation-mode voice command.
+        """Handle a voice command when nav mode or hot mic is active.
+
+        Hot mic takes priority: if active, route through the full intent
+        router (silently drop unknowns). Nav mode falls back to key lookup only.
 
         :param text: Raw voice text.
-        :returns: True if the command was handled as a nav key, False otherwise.
+        :returns: True if the command was consumed, False otherwise.
         """
         normalized = text.lower().strip()
+
+        # Check for hot mic toggle phrase first — works in both modes
+        if self.hot_mic_active and normalized == self._get_hot_mic_phrase():
+            await self.async_deactivate_hot_mic()
+            return True
+
+        # ── Hot mic mode: route ALL speech through the full command pipeline ──
+        if self.hot_mic_active:
+            self._reset_hot_mic_timeout()
+            handled = await self._route_hot_mic_command(text)
+            # Fire ready event so an HA automation can re-trigger the microphone
+            self._hass.bus.async_fire(
+                EVENT_HOT_MIC_READY,
+                {"entry_id": self._entry.entry_id, "handled": handled},
+            )
+            return True  # always consume in hot mic mode (silence unknown commands)
+
+        # ── Navigation mode: key lookup only ─────────────────────────────────
+        if not self.is_active:
+            return False
 
         # Check repeat patterns
         if any(p in normalized for p in REPEAT_PATTERNS):
@@ -106,7 +220,6 @@ class NavigationMode:
         # Direct phrase lookup
         key = VOICE_TO_KEY.get(normalized)
         if key is None:
-            # Try prefix match for multi-word phrases
             key = next(
                 (v for k, v in VOICE_TO_KEY.items() if normalized.startswith(k)),
                 None,
@@ -119,6 +232,21 @@ class NavigationMode:
             return True
 
         return False
+
+    async def _route_hot_mic_command(self, text: str) -> bool:
+        """Route text through the coordinator's full command pipeline.
+
+        Returns True if the command produced a meaningful result.
+        Unknown / unhandled commands are swallowed silently.
+        """
+        coordinator = self._coordinator
+        try:
+            reply = await coordinator.async_send_command(text, suppress_error_speech=True)
+            _LOGGER.debug("Hot mic command %r → %r", text, reply)
+            return bool(reply and reply != "Done.")
+        except Exception as exc:
+            _LOGGER.debug("Hot mic command failed silently: %s", exc)
+            return False
 
     # ------------------------------------------------------------------
     # Internal

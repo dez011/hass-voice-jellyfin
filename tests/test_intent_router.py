@@ -146,8 +146,34 @@ async def test_filter_intent_updates_context():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_resume_intent_calls_jellyfin_resume():
+async def test_resume_intent_unpauses_paused_session():
+    """RESUME should unpause a currently paused session rather than starting fresh."""
+    item = MediaItem(id="ep-001", name="Breaking Bad S01E01", type="Episode")
+    session = PlaybackSession(id="sess-001", user_id="user-001", item=item, is_paused=True)
+
     jellyfin = MagicMock()
+    jellyfin.async_get_sessions = AsyncMock(return_value=[session])
+    jellyfin.async_unpause = AsyncMock()
+    jellyfin.async_resume = AsyncMock(return_value="Breaking Bad S01E01")
+    jellyfin._auth = MagicMock()
+    jellyfin._auth.user_id = "user-001"
+
+    router = _make_router(jellyfin=jellyfin)
+    provider = _provider_returning({"intent": "RESUME", "params": {"user_id": "user-001"}})
+    context = AIContext()
+
+    result = await router.async_route("resume", provider, context)
+
+    jellyfin.async_unpause.assert_called_once_with("sess-001")
+    jellyfin.async_resume.assert_not_called()
+    assert result.media_title == "Breaking Bad S01E01"
+
+
+@pytest.mark.asyncio
+async def test_resume_intent_falls_back_to_resume_items_when_nothing_paused():
+    """RESUME with no paused session should call async_resume for in-progress items."""
+    jellyfin = MagicMock()
+    jellyfin.async_get_sessions = AsyncMock(return_value=[])
     jellyfin.async_resume = AsyncMock(return_value="Breaking Bad S01E01")
     jellyfin._auth = MagicMock()
     jellyfin._auth.user_id = "user-001"

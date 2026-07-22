@@ -11,6 +11,9 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+_MIN_SCORE = 0.5        # reject anything below this
+_MIN_SCORE_GAP = 0.15  # top match must beat #2 by this much for short queries
+
 _STOP_WORDS = frozenset({
     "the", "a", "an", "of", "and", "in", "on", "at", "to", "is", "s",
     "de", "la", "el", "en", "los", "las",  # common Spanish stop words
@@ -74,9 +77,16 @@ class JellyfinCatalog:
             if genre_hint and genre_hint not in entry.item.genres:
                 continue
             score = _score(query_lower, query_tokens, entry)
-            if score > 0:
+            if score >= _MIN_SCORE:
                 scored.append((score, entry.item))
         scored.sort(key=lambda x: x[0], reverse=True)
+
+        # For short queries (≤3 chars or single token) require the top hit to
+        # clearly dominate the second — prevents "Up" matching "Upstairs" etc.
+        short_query = len(query_lower.replace(" ", "")) <= 3 or len(query_tokens) <= 1
+        if short_query and len(scored) >= 2 and (scored[0][0] - scored[1][0]) < _MIN_SCORE_GAP:
+            scored = []
+
         results = [item for _, item in scored[:limit]]
         _LOGGER.debug(
             "Catalog search query=%r type=%s year=%s genre=%s → %d hits: %s",

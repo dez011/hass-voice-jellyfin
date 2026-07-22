@@ -26,6 +26,9 @@ from .const import (
     TV_TYPE_ANDROID,
     CONF_CATALOG_REINDEX_INTERVAL,
     DEFAULT_CATALOG_REINDEX_INTERVAL,
+    CONF_PREFERRED_CLIENT_PACKAGE,
+    DEFAULT_PREFERRED_CLIENT_PACKAGE,
+    BITRATE_PRESETS_KBPS,
 )
 
 _LOGGER = logging.getLogger(LOGGER_NAME)
@@ -52,6 +55,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._current_provider_label: str = ""
         self._current_device: str = ""
         self._reindex_unsub: Optional[Any] = None
+        self._bitrate_idx: int = -1  # -1 = auto; tracks quality step across commands
 
     async def async_setup(self) -> None:
         """Initialize all sub-components."""
@@ -164,27 +168,50 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         from .ai.providers import build_provider
         self.ai_provider = await build_provider(self.hass, config)
 
-    async def async_send_command(self, text: str) -> str:
+    async def async_send_command(self, text: str, suppress_error_speech: bool = False) -> str:
         """Route a natural language command through AI and execute it."""
         from .ai.intent_router import IntentRouter
         self._last_command = text
         merged_config = {**self.entry.data, **(self.entry.options or {})}
         ai_enabled = merged_config.get(CONF_AI_ENABLED, False)
+
+        # Check for hot mic toggle phrase before routing
+        if self.navigation_mode:
+            phrase = self.navigation_mode._get_hot_mic_phrase()
+            if text.lower().strip() == phrase:
+                await self.navigation_mode.async_toggle_hot_mic()
+                state = "activated" if self.navigation_mode.hot_mic_active else "deactivated"
+                return f"Hot mic {state}."
+        preferred_pkg = merged_config.get(CONF_PREFERRED_CLIENT_PACKAGE, DEFAULT_PREFERRED_CLIENT_PACKAGE)
         router = IntentRouter(
             jellyfin=self.jellyfin_client,
             tv=self.tv_controller,
             nav=self.navigation_mode,
             hass=self.hass,
             tv_type=self.entry.data.get(CONF_TV_TYPE, ""),
+            preferred_client_package=preferred_pkg,
+            bitrate_presets=BITRATE_PRESETS_KBPS,
+            current_bitrate_idx=self._bitrate_idx,
         )
         result = await router.async_route(text, self.ai_provider, self.ai_context, ai_enabled=ai_enabled)
         if result.media_title:
             self._last_media = result.media_title
+        # Persist quality step so next QUALITY_UP/DOWN continues from same point
+        self._bitrate_idx = router._bitrate_idx
         try:
             self.async_set_updated_data(await self._async_update_data())
         except Exception:
             _LOGGER.debug("Post-command status refresh failed", exc_info=True)
-        return result.speech_reply or "Done."
+
+        reply = result.speech_reply or "Done."
+        # In hot mic mode, suppress generic error/fallback speech so silence = ignored
+        if suppress_error_speech and reply in (
+            "Sorry, I had trouble understanding that.",
+            "Sorry, that didn't work.",
+            "Done.",
+        ):
+            return ""
+        return reply
 
     async def async_shutdown(self) -> None:
         """Clean up connections."""

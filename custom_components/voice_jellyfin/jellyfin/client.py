@@ -206,10 +206,13 @@ class JellyfinClient:
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in (data or [])]
 
-    async def async_get_series_play_target(self, series_id: str, user_id: str) -> Optional[tuple[str, int]]:
+    async def async_get_series_play_target(
+        self, series_id: str, user_id: str, season_number: Optional[int] = None
+    ) -> Optional[tuple[str, int]]:
         """Return (episode_id, resume_ticks) for the best episode to play next.
 
-        Priority:
+        If season_number is given, play the first episode of that season.
+        Otherwise:
           1. In-progress episode for this series (resume mid-episode)
           2. NextUp episode (first unwatched after last completed)
           3. First episode of the series (S1E1)
@@ -217,6 +220,26 @@ class JellyfinClient:
         """
         session = self._get_session()
         base = self._auth.base_url()
+
+        # Season-specific: jump straight to S{n}E1
+        if season_number is not None:
+            ep_url = f"{base}/Shows/{series_id}/Episodes"
+            async with session.get(ep_url, params={
+                "UserId": user_id,
+                "Season": season_number,
+                "Limit": 1,
+                "SortBy": "SortName",
+                "Fields": "UserData",
+            }, headers=self._h()) as resp:
+                ep_data = await resp.json(content_type=None)
+            items = ep_data.get("Items", [])
+            if items:
+                ep = items[0]
+                ticks = ep.get("UserData", {}).get("PlaybackPositionTicks", 0)
+                _LOGGER.debug("Series play target: season %d first ep %r ticks=%d", season_number, ep.get("Name"), ticks)
+                return ep["Id"], ticks
+            _LOGGER.warning("No episodes found for series %s season %d", series_id, season_number)
+            return None
 
         # 1. In-progress episode
         resume_url = f"{base}/Users/{user_id}/Items/Resume"
@@ -300,15 +323,23 @@ class JellyfinClient:
         base = self._auth.base_url()
         return [PlaybackSession.from_api(s, base) for s in (data or [])]
 
-    async def async_play(self, session_id: str, item_id: str, start_ticks: int = 0) -> None:
+    async def async_play(
+        self,
+        session_id: str,
+        item_id: str,
+        start_ticks: int = 0,
+        max_bitrate_kbps: Optional[int] = None,
+    ) -> None:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing"
         params: dict[str, Any] = {"playCommand": "PlayNow", "itemIds": item_id}
         if start_ticks:
             params["startPositionTicks"] = start_ticks
+        if max_bitrate_kbps:
+            params["MaxStreamingBitrate"] = max_bitrate_kbps * 1000
         async with session.post(url, params=params, headers=self._h()) as resp:
             await resp.read()
-        _LOGGER.debug("Play command sent: session=%s item=%s ticks=%d", session_id, item_id, start_ticks)
+        _LOGGER.debug("Play command sent: session=%s item=%s ticks=%d bitrate=%s", session_id, item_id, start_ticks, max_bitrate_kbps)
 
     async def async_pause(self, session_id: str) -> None:
         session = self._get_session()
@@ -327,6 +358,100 @@ class JellyfinClient:
         url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing/Stop"
         async with session.post(url, headers=self._h()) as resp:
             await resp.read()
+
+    async def async_next_track(self, session_id: str) -> None:
+        """Skip to the next episode/track."""
+        session = self._get_session()
+        url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing/Next"
+        async with session.post(url, headers=self._h()) as resp:
+            await resp.read()
+        _LOGGER.debug("Next track sent: session=%s", session_id)
+
+    async def async_set_favorite(self, user_id: str, item_id: str, is_favorite: bool = True) -> None:
+        """Add or remove an item from the user's favorites."""
+        session = self._get_session()
+        url = f"{self._auth.base_url()}/Users/{user_id}/FavoriteItems/{item_id}"
+        if is_favorite:
+            async with session.post(url, headers=self._h()) as resp:
+                await resp.read()
+        else:
+            async with session.delete(url, headers=self._h()) as resp:
+                await resp.read()
+        _LOGGER.debug("Favorite %s for item %s user %s", "set" if is_favorite else "cleared", item_id, user_id)
+
+    async def async_get_latest_episode(self, series_id: str, user_id: str) -> Optional[tuple[str, str]]:
+        """Return (episode_id, episode_name) of the most recently aired episode."""
+        http_session = self._get_session()
+        url = f"{self._auth.base_url()}/Shows/{series_id}/Episodes"
+        async with http_session.get(url, params={
+            "UserId": user_id,
+            "SortBy": "PremiereDate",
+            "SortOrder": "Descending",
+            "Limit": 1,
+            "Fields": "PremiereDate",
+        }, headers=self._h()) as resp:
+            data = await resp.json(content_type=None)
+        items = data.get("Items", [])
+        if items:
+            ep = items[0]
+            return ep["Id"], ep.get("Name", "")
+        return None
+
+    async def async_get_now_playing(self) -> Optional[tuple[str, str]]:
+        """Return (item_name, description) for what's currently playing, or None."""
+        sessions = await self.async_get_sessions()
+        active = next((s for s in sessions if s.item and not s.is_paused), None)
+        if not active:
+            active = next((s for s in sessions if s.item), None)
+        if not active or not active.item:
+            return None
+        item = active.item
+        desc = item.name
+        # Include episode info if available from the raw session data
+        return item.name, desc
+
+    async def async_skip_intro(self, session_id: str) -> bool:
+        """Seek past the intro chapter for the current session.
+
+        Tries to find a chapter named 'intro' first; falls back to seeking
+        90 seconds forward if no chapter marker is found.
+        Returns True if the seek was performed.
+        """
+        sessions = await self.async_get_sessions()
+        target = next((s for s in sessions if s.id == session_id), None)
+        if not target or not target.item:
+            return False
+
+        # Fetch item details including chapters
+        http_session = self._get_session()
+        url = f"{self._auth.base_url()}/Items/{target.item.id}"
+        async with http_session.get(url, params={"Fields": "Chapters"}, headers=self._h()) as resp:
+            data = await resp.json(content_type=None)
+
+        chapters = data.get("Chapters", [])
+        seek_ticks: Optional[int] = None
+        for i, ch in enumerate(chapters):
+            if "intro" in ch.get("Name", "").lower():
+                # Seek to start of next chapter after intro
+                if i + 1 < len(chapters):
+                    seek_ticks = chapters[i + 1]["StartPositionTicks"]
+                break
+
+        if seek_ticks is None:
+            # Fallback: jump 90s forward from current position
+            _NINETY_SECONDS_TICKS = 90 * 10_000_000
+            seek_ticks = target.position_ticks + _NINETY_SECONDS_TICKS
+
+        seek_url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing/Seek"
+        async with http_session.post(seek_url, params={"seekPositionTicks": seek_ticks}, headers=self._h()) as resp:
+            await resp.read()
+        _LOGGER.debug("Skip intro: session=%s seek_ticks=%d", session_id, seek_ticks)
+        return True
+
+    async def async_get_sessions_with_item(self) -> list[Any]:
+        """Return sessions that have an active NowPlayingItem."""
+        sessions = await self.async_get_sessions()
+        return [s for s in sessions if s.item]
 
     async def async_resume(self, user_id: str) -> Optional[str]:
         """Resume the first in-progress item on the active session."""

@@ -108,6 +108,18 @@ DEFAULT_OLLAMA_KEEP_ALIVE = "5m"
 CONF_CATALOG_REINDEX_INTERVAL = "catalog_reindex_interval"
 DEFAULT_CATALOG_REINDEX_INTERVAL = 24  # hours; 0 = manual only
 
+CONF_PREFERRED_CLIENT_PACKAGE = "preferred_client_package"
+CONF_ANNOUNCE_ON_PLAY = "announce_on_play"
+CONF_SKIP_FORWARD_SECONDS = "skip_forward_seconds"
+CONF_SKIP_BACK_SECONDS = "skip_back_seconds"
+
+DEFAULT_PREFERRED_CLIENT_PACKAGE = "org.jellyfin.androidtv"
+DEFAULT_ANNOUNCE_ON_PLAY = False
+DEFAULT_SKIP_FORWARD_SECONDS = 30
+DEFAULT_SKIP_BACK_SECONDS = 10
+
+BITRATE_PRESETS_KBPS = [500, 1000, 2000, 4000, 8000, 20000, 40000]  # kbps steps for quality up/down
+
 CATALOG_REINDEX_OPTIONS = {
     "Manual only": 0,
     "Every 6 hours": 6,
@@ -130,6 +142,14 @@ SERVICE_NAVIGATION_MODE_OFF = "navigation_mode_off"
 SERVICE_REPEAT_LAST_ACTION = "repeat_last_action"
 SERVICE_GO_HOME = "go_home"
 SERVICE_GO_BACK = "go_back"
+SERVICE_OPEN_APP = "open_app"
+SERVICE_NEXT_EPISODE = "next_episode"
+SERVICE_SKIP_INTRO = "skip_intro"
+SERVICE_QUALITY_UP = "quality_up"
+SERVICE_QUALITY_DOWN = "quality_down"
+SERVICE_FAVORITE = "favorite"
+SERVICE_UNFAVORITE = "unfavorite"
+SERVICE_NOW_PLAYING = "now_playing"
 
 # Remote key events
 KEY_UP = "up"
@@ -153,6 +173,13 @@ KEY_MUTE = "mute"
 # HA event names
 EVENT_NAVIGATION_MODE_CHANGED = f"{DOMAIN}_navigation_mode_changed"
 EVENT_COMMAND_RECEIVED = f"{DOMAIN}_command_received"
+EVENT_HOT_MIC_CHANGED = f"{DOMAIN}_hot_mic_changed"
+EVENT_HOT_MIC_READY = f"{DOMAIN}_hot_mic_ready"  # fired after each command; automation hooks here to re-trigger mic
+
+CONF_HOT_MIC_PHRASE = "hot_mic_phrase"
+DEFAULT_HOT_MIC_PHRASE = "hey jellyfin"
+CONF_HOT_MIC_TIMEOUT = "hot_mic_timeout"
+DEFAULT_HOT_MIC_TIMEOUT = 30  # seconds of silence before auto-deactivating
 
 # Coordinator update interval (seconds)
 UPDATE_INTERVAL = 30
