@@ -567,6 +567,18 @@ class IntentRouter:
     _UNFAVORITE_PHRASES = frozenset({"unfavorite", "remove from favorites", "remove this from favorites"})
     _NOW_PLAYING_PHRASES = frozenset({"what's playing", "whats playing", "what is playing", "now playing", "what's on"})
     _OPEN_APP_PHRASES = frozenset({"open jellyfin", "launch jellyfin", "open the app", "launch the app"})
+    _NAVIGATE_PHRASES: dict[str, str] = {
+        "up": "up", "go up": "up", "move up": "up", "scroll up": "up",
+        "down": "down", "go down": "down", "move down": "down", "scroll down": "down",
+        "left": "left", "go left": "left", "move left": "left",
+        "right": "right", "go right": "right", "move right": "right",
+        "back": "back", "go back": "back",
+        "home": "home", "go home": "home",
+        "select": "select", "ok": "select", "enter": "select", "confirm": "select",
+        "page up": "page_up", "page down": "page_down",
+        "fast forward": "fast_forward", "rewind": "rewind",
+        "volume up": "volume_up", "volume down": "volume_down", "mute": "mute",
+    }
 
     def _rule_based_intent(self, text: str) -> IntentResult:
         """Map a voice command to an intent without an AI provider."""
@@ -594,6 +606,8 @@ class IntentRouter:
             return IntentResult(intent="NOW_PLAYING")
         if lower in self._OPEN_APP_PHRASES:
             return IntentResult(intent="OPEN_APP")
+        if lower in self._NAVIGATE_PHRASES:
+            return IntentResult(intent="NAVIGATE", params={"direction": self._NAVIGATE_PHRASES[lower]})
         for prefix in self._PLAY_PREFIXES:
             if lower.startswith(prefix):
                 return IntentResult(intent="PLAY", params={"query": stripped[len(prefix):].strip()})
