@@ -123,7 +123,8 @@ def async_register_services(hass: HomeAssistant) -> None:
             if client:
                 if not session_id:
                     sessions = await client.async_get_sessions()
-                    session_id = sessions[0].id if sessions else None
+                    active = next((s for s in sessions if s.item), None)
+                    session_id = active.id if active else None
                 if session_id:
                     await client.async_pause(session_id)
 
@@ -134,7 +135,8 @@ def async_register_services(hass: HomeAssistant) -> None:
             if client:
                 if not session_id:
                     sessions = await client.async_get_sessions()
-                    session_id = sessions[0].id if sessions else None
+                    active = next((s for s in sessions if s.item), None)
+                    session_id = active.id if active else None
                 if session_id:
                     await client.async_stop(session_id)
 

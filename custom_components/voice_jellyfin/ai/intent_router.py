@@ -260,7 +260,10 @@ class IntentRouter:
                 await self._send_key("select")
             elif intent == "SCROLL":
                 direction = params.get("direction", "down")
-                amount = int(params.get("amount", 1))
+                try:
+                    amount = int(params.get("amount", 1))
+                except (ValueError, TypeError):
+                    amount = 1
                 for _ in range(amount):
                     await self._send_key(direction)
         except Exception as exc:
@@ -543,7 +546,7 @@ class IntentRouter:
             return None
         sessions = await self._jellyfin.async_get_sessions()
         active = next((s for s in sessions if s.item), None)
-        return active.id if active else (sessions[0].id if sessions else None)
+        return active.id if active else None
 
     async def _send_key(self, key: str) -> None:
         if self._tv:

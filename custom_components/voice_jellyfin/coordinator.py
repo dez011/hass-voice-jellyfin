@@ -175,10 +175,12 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         merged_config = {**self.entry.data, **(self.entry.options or {})}
         ai_enabled = merged_config.get(CONF_AI_ENABLED, False)
 
-        # Check for hot mic toggle phrase before routing
+        # Check for hot mic toggle phrase before routing (strip punctuation for robustness)
         if self.navigation_mode:
             phrase = self.navigation_mode._get_hot_mic_phrase()
-            if text.lower().strip() == phrase:
+            normalized = "".join(c for c in text.lower() if c.isalnum() or c.isspace()).strip()
+            phrase_normalized = "".join(c for c in phrase if c.isalnum() or c.isspace()).strip()
+            if normalized == phrase_normalized:
                 await self.navigation_mode.async_toggle_hot_mic()
                 state = "activated" if self.navigation_mode.hot_mic_active else "deactivated"
                 return f"Hot mic {state}."

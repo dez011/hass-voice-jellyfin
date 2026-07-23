@@ -95,8 +95,9 @@ class AndroidTVController:
     async def async_ensure_awake(self, timeout: float = 30.0) -> bool:
         """Wake the TV and poll until it responds (or timeout). Returns True if awake."""
         await self.async_wake()
-        deadline = asyncio.get_event_loop().time() + timeout
-        while asyncio.get_event_loop().time() < deadline:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
             state = self._hass.states.get(self._entity_id)
             if state and state.state not in ("off", "unavailable", "unknown"):
                 return True
@@ -120,8 +121,8 @@ class AndroidTVController:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _adb_command(self, cmd: str) -> None:
-        """Execute a raw ADB shell command via the androidtv integration."""
+    async def _adb_command(self, cmd: str) -> str:
+        """Execute a raw ADB shell command via the androidtv integration. Returns output or ''."""
         if remote._has_androidtv_service(self._hass):
             try:
                 await self._hass.services.async_call(
@@ -130,7 +131,10 @@ class AndroidTVController:
                     {"entity_id": self._entity_id, "command": cmd},
                     blocking=True,
                 )
+                return ""
             except Exception as exc:
                 _LOGGER.error("ADB command '%s' failed: %s", cmd, exc)
+                return "error"
         else:
             _LOGGER.debug("androidtv service not available; skipping: %s", cmd)
+            return ""

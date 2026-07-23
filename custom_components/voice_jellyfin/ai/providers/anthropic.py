@@ -46,8 +46,11 @@ class AnthropicProvider(AIProvider):
         client = self._get_client()
         # Anthropic SDK expects user/assistant alternation; ensure we start with user
         api_messages = [m for m in messages if m.get("role") in ("user", "assistant")]
-        if not api_messages or api_messages[0]["role"] != "user":
-            api_messages = [{"role": "user", "content": "Hello"}] + api_messages
+        # Drop leading assistant turns without adding a dummy user message to context history
+        while api_messages and api_messages[0]["role"] != "user":
+            api_messages = api_messages[1:]
+        if not api_messages:
+            api_messages = [{"role": "user", "content": "Hello"}]
 
         response = await client.messages.create(  # type: ignore[union-attr]
             model=self._model,
