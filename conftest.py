@@ -19,7 +19,7 @@ def _make_module(name: str, **attrs: object) -> types.ModuleType:
 # ── homeassistant core ────────────────────────────────────────────────────────
 
 _ha = _make_module("homeassistant")
-_ha_core = _make_module("homeassistant.core", HomeAssistant=MagicMock, callback=lambda f: f, ServiceCall=MagicMock)
+_ha_core = _make_module("homeassistant.core", HomeAssistant=MagicMock, callback=lambda f: f, ServiceCall=MagicMock, Event=MagicMock)
 _ha_const = _make_module("homeassistant.const", Platform=MagicMock(), EVENT_STATE_CHANGED="state_changed")
 
 # config_entries
@@ -90,6 +90,8 @@ _make_module("homeassistant.helpers.update_coordinator",
              UpdateFailed=Exception,
              CoordinatorEntity=_CoordinatorEntity)
 _make_module("homeassistant.helpers.entity_platform", AddEntitiesCallback=MagicMock)
+_make_module("homeassistant.helpers.event",
+             async_track_time_interval=MagicMock(return_value=MagicMock()))
 _make_module("homeassistant.helpers.config_validation",
              string=str, boolean=bool, positive_int=int,
              PLATFORM_SCHEMA=MagicMock())

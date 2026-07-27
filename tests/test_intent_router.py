@@ -280,3 +280,151 @@ async def test_ai_disabled_pause_command_pauses():
 
     assert result.intent == "PAUSE"
     jellyfin.async_pause.assert_called_once_with("sess-001")
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: parsing robustness and dispatch edge cases
+# ---------------------------------------------------------------------------
+
+def _provider_returning_raw(raw: str):
+    provider = MagicMock()
+    provider.async_query = AsyncMock(return_value=raw)
+    return provider
+
+
+@pytest.mark.asyncio
+async def test_non_json_reply_searches_original_text():
+    """When the AI answers with prose, search the USER's words — not the
+    AI's error message."""
+    jellyfin = MagicMock()
+    jellyfin.async_search = AsyncMock(return_value=[])
+    router = _make_router(jellyfin=jellyfin)
+    provider = _provider_returning_raw("Sorry, I couldn't understand that request.")
+
+    await router.async_route("play inception", provider, AIContext())
+
+    query_used = jellyfin.async_search.call_args[0][0]
+    assert "sorry" not in query_used.lower()
+    assert "inception" in query_used.lower()
+
+
+@pytest.mark.asyncio
+async def test_json_embedded_in_prose_is_extracted():
+    jellyfin = MagicMock()
+    item = MediaItem(id="i1", name="Inception", type="Movie")
+    session = PlaybackSession(id="s1", user_id="u1", item=item)
+    jellyfin.async_search = AsyncMock(return_value=[item])
+    jellyfin.async_get_sessions = AsyncMock(return_value=[session])
+    jellyfin.async_play = AsyncMock()
+    router = _make_router(jellyfin=jellyfin, tv=None)
+    provider = _provider_returning_raw(
+        'Here is the JSON you asked for:\n{"intent": "PLAY", "params": {"query": "Inception"}}'
+    )
+
+    result = await router.async_route("play inception", provider, AIContext())
+    assert result.intent == "PLAY"
+    jellyfin.async_play.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_unknown_intent_does_not_claim_success():
+    """A hallucinated intent must not produce the default 'Done.' reply."""
+    router = _make_router()
+    provider = _provider_returning({"intent": "VOLUME_UP", "params": {}})
+    result = await router.async_route("turn it up", provider, AIContext())
+    assert result.speech_reply  # non-empty
+    assert "can't" in result.speech_reply.lower() or "sorry" in result.speech_reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_repeat_intent_resends_last_nav_key():
+    tv = MagicMock()
+    tv.async_send_key = AsyncMock()
+    nav = MagicMock()
+    nav._last_key = "down"
+    router = _make_router(tv=tv, nav=nav)
+    provider = _provider_returning({"intent": "REPEAT", "params": {}})
+
+    await router.async_route("again", provider, AIContext())
+    tv.async_send_key.assert_called_once_with("down")
+
+
+@pytest.mark.asyncio
+async def test_repeat_intent_without_history_says_so():
+    nav = MagicMock()
+    nav._last_key = None
+    tv = MagicMock()
+    tv.async_send_key = AsyncMock()
+    router = _make_router(tv=tv, nav=nav)
+    provider = _provider_returning({"intent": "REPEAT", "params": {}})
+
+    result = await router.async_route("again", provider, AIContext())
+    tv.async_send_key.assert_not_called()
+    assert "repeat" in result.speech_reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_resume_with_null_user_id_falls_back_to_auth_user():
+    """LLMs commonly emit "user_id": null for optional params."""
+    jellyfin = MagicMock()
+    jellyfin.async_get_sessions = AsyncMock(return_value=[])
+    jellyfin.async_resume = AsyncMock(return_value="Some Show")
+    jellyfin._auth = MagicMock()
+    jellyfin._auth.user_id = "auth-user"
+    router = _make_router(jellyfin=jellyfin)
+    provider = _provider_returning({"intent": "RESUME", "params": {"user_id": None}})
+
+    await router.async_route("resume", provider, AIContext())
+    jellyfin.async_resume.assert_called_once_with("auth-user")
+
+
+@pytest.mark.asyncio
+async def test_play_season_as_string_is_coerced():
+    item = MediaItem(id="series-1", name="Breaking Bad", type="Series")
+    session = PlaybackSession(id="s1", user_id="u1", item=item)
+    jellyfin = MagicMock()
+    jellyfin.async_search = AsyncMock(return_value=[item])
+    jellyfin.async_get_sessions = AsyncMock(return_value=[session])
+    jellyfin.async_get_series_play_target = AsyncMock(return_value=("ep-1", 0))
+    jellyfin.async_play = AsyncMock()
+    jellyfin._auth = MagicMock()
+    jellyfin._auth.user_id = "u1"
+    router = _make_router(jellyfin=jellyfin, tv=None)
+    provider = _provider_returning(
+        {"intent": "PLAY", "params": {"query": "Breaking Bad", "season": "3"}}
+    )
+
+    await router.async_route("play season 3 of breaking bad", provider, AIContext())
+    season_arg = jellyfin.async_get_series_play_target.call_args[1]["season_number"]
+    assert season_arg == 3 and isinstance(season_arg, int)
+
+
+@pytest.mark.asyncio
+async def test_quality_index_unchanged_when_restart_fails():
+    """A failed stop/play must not desync the tracked quality step."""
+    item = MediaItem(id="i1", name="Movie", type="Movie")
+    session = PlaybackSession(id="s1", user_id="u1", item=item, position_ticks=100)
+    jellyfin = MagicMock()
+    jellyfin.async_get_sessions = AsyncMock(return_value=[session])
+    jellyfin.async_stop = AsyncMock(side_effect=ConnectionError("boom"))
+    router = _make_router(jellyfin=jellyfin)
+    provider = _provider_returning({"intent": "QUALITY_DOWN", "params": {}})
+
+    before = router._bitrate_idx
+    await router.async_route("lower the quality", provider, AIContext())
+    assert router._bitrate_idx == before
+
+
+@pytest.mark.asyncio
+async def test_parse_non_dict_json_falls_back():
+    router = _make_router()
+    result = router._parse('["not", "a", "dict"]', fallback_query="original words")
+    assert result.intent == "SEARCH"
+    assert result.params["query"] == "original words"
+
+
+@pytest.mark.asyncio
+async def test_parse_null_speech_is_empty_string():
+    router = _make_router()
+    result = router._parse('{"intent": "SEARCH", "params": {"query": "x"}, "speech": null}')
+    assert result.speech_reply == ""

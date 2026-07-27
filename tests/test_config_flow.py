@@ -182,3 +182,75 @@ async def test_full_flow_creates_entry(flow):
         {"button_entity": "input_button.btn", "button_trigger": "state_changed"}
     )
     flow.async_create_entry.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: AI enablement, duplicate guard, options-flow saving
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_choosing_ai_provider_enables_ai(flow):
+    """Regression: entries created by the wizard never set ai_enabled, so
+    every voice command silently fell back to rule-based intents."""
+    flow.async_step_cloud_provider = AsyncMock(return_value={"type": "form"})
+    await flow.async_step_ai_provider({"ai_provider": "openai"})
+    assert flow._data["ai_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_jellyfin_step_sets_unique_id(flow):
+    """The server URL becomes the unique id so a server can't be added twice."""
+    flow.async_step_tv_device = AsyncMock(return_value={"type": "form"})
+    with patch(
+        "custom_components.voice_jellyfin.jellyfin.client.JellyfinClient"
+    ) as MockClient:
+        MockClient.return_value.async_connect = AsyncMock(return_value={"Version": "10.9"})
+        MockClient.return_value.async_close = AsyncMock()
+        await flow.async_step_jellyfin(
+            {"jellyfin_url": "http://MyServer:8096/", "jellyfin_api_key": "abc"}
+        )
+    assert flow.unique_id == "http://myserver:8096"
+
+
+def _make_options_flow(entry_data=None, entry_options=None, hass=None):
+    from custom_components.voice_jellyfin.config_flow import VoiceJellyfinOptionsFlow
+
+    entry = MagicMock()
+    entry.entry_id = "entry-1"
+    entry.data = entry_data or {"jellyfin_url": "http://x", "jellyfin_api_key": "SECRET"}
+    entry.options = entry_options or {}
+    oflow = VoiceJellyfinOptionsFlow(entry)
+    oflow.hass = hass or MagicMock()
+    oflow.async_show_form = MagicMock(side_effect=lambda **kw: {"type": "form", **kw})
+    captured = {}
+
+    def _create_entry(title="", data=None):
+        captured["data"] = data
+        return {"type": "create_entry", "data": data}
+
+    oflow.async_create_entry = MagicMock(side_effect=_create_entry)
+    return oflow, captured
+
+
+@pytest.mark.asyncio
+async def test_options_save_does_not_clone_entry_data():
+    """Regression: every options save copied ALL of entry.data (including
+    the Jellyfin API key) into entry.options, permanently shadowing data."""
+    oflow, captured = _make_options_flow()
+    await oflow.async_step_nav({"nav_timeout": "30"})
+    assert captured["data"] == {"nav_timeout": "30"}
+    assert "jellyfin_api_key" not in captured["data"]
+
+
+@pytest.mark.asyncio
+async def test_options_save_preserves_existing_options():
+    oflow, captured = _make_options_flow(entry_options={"ai_enabled": True})
+    await oflow.async_step_nav({"nav_timeout": "30"})
+    assert captured["data"] == {"ai_enabled": True, "nav_timeout": "30"}
+
+
+@pytest.mark.asyncio
+async def test_options_ai_disabled_short_circuits():
+    oflow, captured = _make_options_flow()
+    await oflow.async_step_ai_provider({"ai_enabled": False, "ai_provider": "openai"})
+    assert captured["data"]["ai_enabled"] is False

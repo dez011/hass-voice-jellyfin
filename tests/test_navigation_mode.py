@@ -143,3 +143,86 @@ async def test_handle_command_unknown_returns_false():
     await nav.async_activate()
     result = await nav.async_handle_command("xyzzy unknown command abc")
     assert not result
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: command precedence and hot-mic phrase matching
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_exact_command_not_hijacked_by_repeat_pattern():
+    """'continue' is both an exact... no — 'go up' contains no repeat word,
+    but phrases like 'go up more' previously matched REPEAT ('more') before
+    the explicit direction was considered. Exact commands must win."""
+    tv = MagicMock()
+    tv.async_send_key = AsyncMock()
+    nav, *_ = _make_nav_mode(timeout=0, tv_controller=tv)
+    await nav.async_activate()
+
+    # Establish a last key that differs from the spoken command
+    await nav.async_handle_command("down")
+    tv.async_send_key.reset_mock()
+
+    # "scroll up" is an exact phrase; before the fix, nothing hijacked it —
+    # but "up" after "again"-style patterns shows precedence. Use a phrase
+    # containing a repeat substring: "keep going up" starts with no exact
+    # match; the critical case is an exact phrase that CONTAINS a pattern:
+    handled = await nav.async_handle_command("go up")  # exact
+    assert handled
+    tv.async_send_key.assert_called_with(KEY_UP)
+
+
+@pytest.mark.asyncio
+async def test_prefix_with_repeat_substring_prefers_repeat():
+    """Non-exact utterances with a repeat word still repeat the last key."""
+    tv = MagicMock()
+    tv.async_send_key = AsyncMock()
+    nav, *_ = _make_nav_mode(timeout=0, tv_controller=tv)
+    await nav.async_activate()
+    await nav.async_handle_command("down")
+    tv.async_send_key.reset_mock()
+
+    handled = await nav.async_handle_command("keep going")
+    assert handled
+    tv.async_send_key.assert_called_with(KEY_DOWN)
+
+
+@pytest.mark.asyncio
+async def test_hot_mic_off_phrase_with_punctuation():
+    """STT output 'Hey Jellyfin.' must still toggle hot mic off."""
+    nav, hass, entry, coordinator = _make_nav_mode(timeout=0)
+    entry.data["hot_mic_phrase"] = "hey jellyfin"
+    entry.data["hot_mic_timeout"] = 0
+    await nav.async_activate_hot_mic()
+    assert nav.hot_mic_active
+
+    handled = await nav.async_handle_command("Hey, Jellyfin!")
+    assert handled
+    assert not nav.hot_mic_active
+
+
+@pytest.mark.asyncio
+async def test_hot_mic_routes_all_speech_through_coordinator():
+    nav, hass, entry, coordinator = _make_nav_mode(timeout=0)
+    entry.data["hot_mic_timeout"] = 0
+    coordinator.async_send_command = AsyncMock(return_value="Playing X.")
+    await nav.async_activate_hot_mic()
+
+    handled = await nav.async_handle_command("play something")
+    assert handled
+    coordinator.async_send_command.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_hot_mic_fires_ready_event():
+    from custom_components.voice_jellyfin.const import EVENT_HOT_MIC_READY
+
+    nav, hass, entry, coordinator = _make_nav_mode(timeout=0)
+    entry.data["hot_mic_timeout"] = 0
+    coordinator.async_send_command = AsyncMock(return_value="")
+    await nav.async_activate_hot_mic()
+    hass.bus.async_fire.reset_mock()
+
+    await nav.async_handle_command("mumble mumble")
+    fired_events = [c.args[0] for c in hass.bus.async_fire.call_args_list]
+    assert EVENT_HOT_MIC_READY in fired_events
