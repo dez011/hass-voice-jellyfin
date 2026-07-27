@@ -46,11 +46,12 @@ class HAConversationProvider(AIProvider):
             f"{system_prompt}\n\nUser command: {last_user}"
         )
 
+        language = getattr(getattr(self._hass, "config", None), "language", None) or "en"
         try:
             result = await self._hass.services.async_call(
                 "conversation",
                 "process",
-                {"text": full_text, "language": "en"},
+                {"text": full_text, "language": language},
                 blocking=True,
                 return_response=True,
             )

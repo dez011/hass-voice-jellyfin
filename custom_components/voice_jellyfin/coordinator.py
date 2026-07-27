@@ -16,6 +16,7 @@ from .const import (
     UPDATE_INTERVAL,
     CONF_JELLYFIN_URL,
     CONF_JELLYFIN_API_KEY,
+    CONF_JELLYFIN_DEFAULT_USER,
     CONF_JELLYFIN_VERIFY_SSL,
     CONF_AI_ENABLED,
     CONF_AI_PROVIDER,
@@ -56,6 +57,8 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._current_device: str = ""
         self._reindex_unsub: Optional[Any] = None
         self._bitrate_idx: int = -1  # -1 = auto; tracks quality step across commands
+        self.button_trigger: Any = None
+        self._catalog_task: Any = None
 
     async def async_setup(self) -> None:
         """Initialize all sub-components."""
@@ -67,10 +70,11 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         config = {**self.entry.data, **(self.entry.options or {})}
 
-        # Jellyfin
+        # Jellyfin — the configured default user scopes resume/favorites calls
         auth = JellyfinAuth(
             url=config[CONF_JELLYFIN_URL],
             api_key=config.get(CONF_JELLYFIN_API_KEY, ""),
+            user_id=config.get(CONF_JELLYFIN_DEFAULT_USER) or None,
         )
         self.jellyfin_client = JellyfinClient(auth, verify_ssl=config.get(CONF_JELLYFIN_VERIFY_SSL, True), hass=self.hass)
         try:
@@ -110,7 +114,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Catalog — build in the background (a large library can take a
         # while and must not block HA startup), then schedule re-indexing
-        self.hass.async_create_background_task(
+        self._catalog_task = self.hass.async_create_background_task(
             self.async_reindex_catalog(), name="voice_jellyfin_catalog_index"
         )
         self._schedule_reindex(config)
@@ -190,7 +194,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             tv=self.tv_controller,
             nav=self.navigation_mode,
             hass=self.hass,
-            tv_type=self.entry.data.get(CONF_TV_TYPE, ""),
+            tv_type=merged_config.get(CONF_TV_TYPE, ""),
             preferred_client_package=preferred_pkg,
             bitrate_presets=BITRATE_PRESETS_KBPS,
             current_bitrate_idx=self._bitrate_idx,
@@ -216,11 +220,17 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return reply
 
     async def async_shutdown(self) -> None:
-        """Clean up connections."""
+        """Clean up connections, listeners, and background work."""
         if self._reindex_unsub:
             self._reindex_unsub()
             self._reindex_unsub = None
-        if self.jellyfin_client:
-            await self.jellyfin_client.async_close()
+        if self._catalog_task is not None:
+            self._catalog_task.cancel()
+            self._catalog_task = None
+        if self.button_trigger:
+            self.button_trigger.async_detach()
+            self.button_trigger = None
         if self.navigation_mode:
             await self.navigation_mode.async_deactivate()
+        if self.jellyfin_client:
+            await self.jellyfin_client.async_close()

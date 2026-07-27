@@ -54,10 +54,17 @@ class ADBController:
             )
             stdout = stdout_bytes.decode("utf-8", errors="replace").strip()
             if proc.returncode != 0:
-                _LOGGER.debug("ADB stderr: %s", stderr_bytes.decode("utf-8").strip())
+                _LOGGER.debug("ADB stderr: %s", stderr_bytes.decode("utf-8", errors="replace").strip())
             return stdout
         except asyncio.TimeoutError:
             _LOGGER.warning("ADB command timed out: %s", cmd)
+            # Reap the hung process — otherwise each timeout leaks a zombie
+            # adb subprocess and its pipe fds.
+            try:
+                proc.kill()
+                await proc.communicate()
+            except Exception:  # noqa: BLE001 — already timed out; nothing else to do
+                pass
             return ""
         except FileNotFoundError:
             _LOGGER.error("'adb' binary not found on PATH")

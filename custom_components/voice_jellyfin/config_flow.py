@@ -107,6 +107,10 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if test_only:
                     errors["base"] = "connection_ok"
                 else:
+                    # One entry per server — a duplicate would make every
+                    # service call fire twice.
+                    await self.async_set_unique_id(user_input[CONF_JELLYFIN_URL].rstrip("/").lower())
+                    self._abort_if_unique_id_configured()
                     self._data.update(user_input)
                     return await self.async_step_tv_device()
             except PermissionError as exc:
@@ -205,6 +209,10 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Step 4: Choose AI provider."""
         if user_input is not None:
             self._data.update(user_input)
+            # Choosing a provider in setup means the user wants AI routing.
+            # Without this the entry was created with ai_enabled unset and
+            # every command silently fell back to rule-based intents.
+            self._data[CONF_AI_ENABLED] = True
             provider = user_input.get(CONF_AI_PROVIDER)
             if provider == AI_PROVIDER_OLLAMA:
                 return await self.async_step_ollama()
@@ -412,6 +420,16 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         merged.pop("_ollama_models", None)  # scrub temp key from older saves
         return merged
 
+    def _save(self) -> FlowResult:
+        """Persist accumulated options.
+
+        Merges onto the EXISTING options only — never clones entry.data into
+        options (which would permanently shadow data and duplicate secrets).
+        """
+        merged = {**(self._entry.options or {}), **self._options}
+        merged.pop("_ollama_models", None)
+        return self.async_create_entry(title="", data=merged)
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -464,7 +482,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             if self._reindex_done:
                 # second submit — close without saving new options
-                return self.async_create_entry(title="", data={**self._current(), **self._options})
+                return self._save()
             # first submit — run re-index
             if coordinator:
                 try:
@@ -506,7 +524,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
             action = user_input.get("action", "search")
 
             if action == "close":
-                return self.async_create_entry(title="", data={**self._current(), **self._options})
+                return self._save()
 
             query = (user_input.get("query") or "").strip()
             type_filter = user_input.get("type_filter") or None
@@ -618,7 +636,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                 else:
                     user_input[CONF_CATALOG_REINDEX_INTERVAL] = int(user_input.get(CONF_CATALOG_REINDEX_INTERVAL, DEFAULT_CATALOG_REINDEX_INTERVAL))
                     self._options.update(user_input)
-                    return self.async_create_entry(title="", data={**current, **self._options})
+                    return self._save()
             except PermissionError as exc:
                 errors["base"] = "invalid_auth"
                 description_placeholders["status"] = f"\n\n{exc}"
@@ -663,14 +681,14 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             self._options.update(user_input)
             if not user_input.get(CONF_AI_ENABLED, True):
-                return self.async_create_entry(title="", data={**current, **self._options})
+                return self._save()
             provider = user_input.get(CONF_AI_PROVIDER)
             if provider == AI_PROVIDER_OLLAMA:
                 return await self.async_step_ollama()
             if provider == AI_PROVIDER_OPENAI_COMPAT:
                 return await self.async_step_openai_compat()
             if provider == AI_PROVIDER_HA_CONVERSATION:
-                return self.async_create_entry(title="", data={**current, **self._options})
+                return self._save()
             return await self.async_step_cloud_provider()
 
         return self.async_show_form(
@@ -739,7 +757,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             self._options.update(user_input)
             self._options.pop("_ollama_models", None)
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         models: list[str] = self._options.get("_ollama_models", [])
         model_options = [{"value": m, "label": m} for m in models] or [{"value": "llama3", "label": "llama3"}]
@@ -772,7 +790,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         current = self._current()
         if user_input is not None:
             self._options.update(user_input)
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         return self.async_show_form(
             step_id="cloud_provider",
@@ -804,7 +822,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         current = self._current()
         if user_input is not None:
             self._options.update(user_input)
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         return self.async_show_form(
             step_id="openai_compat",
@@ -838,7 +856,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                 return await self.async_step_apple_tv()
             if tv_type == TV_TYPE_ANDROID:
                 return await self.async_step_android_tv()
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         return self.async_show_form(
             step_id="tv",
@@ -865,7 +883,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         current = self._current()
         if user_input is not None:
             self._options.update(user_input)
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         return self.async_show_form(
             step_id="apple_tv",
@@ -889,7 +907,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         current = self._current()
         if user_input is not None:
             self._options.update(user_input)
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         return self.async_show_form(
             step_id="android_tv",
@@ -917,7 +935,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         current = self._current()
         if user_input is not None:
             self._options.update(user_input)
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         return self.async_show_form(
             step_id="nav",

@@ -43,6 +43,43 @@ class JellyfinClient:
         """Auth headers passed per-request."""
         return self._auth.auth_headers()
 
+    @staticmethod
+    def _check_status(resp: aiohttp.ClientResponse, url: str) -> None:
+        """Raise a clean error for non-2xx responses instead of letting
+        resp.json() crash on an empty/HTML error body."""
+        if resp.status == 401:
+            raise PermissionError("Jellyfin API key rejected (401) — check Dashboard → API Keys")
+        if resp.status >= 400:
+            raise ConnectionError(f"Jellyfin API error {resp.status} for {url}")
+
+    async def _get_json(self, url: str, params: Optional[dict[str, Any]] = None) -> Any:
+        session = self._get_session()
+        async with session.get(url, params=params, headers=self._h()) as resp:
+            self._check_status(resp, url)
+            return await resp.json(content_type=None)
+
+    async def _async_effective_user_id(self, user_id: str = "") -> str:
+        """Resolve a usable Jellyfin user id.
+
+        Order: explicit argument → configured auth user → first user reported
+        by the server (cached). Returns "" if none can be resolved.
+        """
+        if user_id:
+            return user_id
+        if self._auth.user_id:
+            return self._auth.user_id
+        try:
+            users = await self._get_json(f"{self._auth.base_url()}/Users")
+            if users:
+                resolved = users[0].get("Id", "")
+                if resolved:
+                    self._auth.user_id = resolved
+                    _LOGGER.debug("Resolved Jellyfin user id from /Users: %s", resolved)
+                return resolved
+        except Exception as exc:
+            _LOGGER.warning("Could not resolve Jellyfin user id: %s", exc)
+        return ""
+
     async def async_connect(self) -> dict[str, Any]:
         """Verify server reachability AND API key validity."""
         base = self._auth.base_url()
@@ -88,10 +125,7 @@ class JellyfinClient:
     # ------------------------------------------------------------------
 
     async def async_get_libraries(self) -> list[Library]:
-        session = self._get_session()
-        url = f"{self._auth.base_url()}/Library/VirtualFolders"
-        async with session.get(url, headers=self._h()) as resp:
-            data = await resp.json(content_type=None)
+        data = await self._get_json(f"{self._auth.base_url()}/Library/VirtualFolders")
         return [Library.from_api(item) for item in (data or [])]
 
     # ------------------------------------------------------------------
@@ -112,8 +146,17 @@ class JellyfinClient:
         If filters produce zero hits, retry once unfiltered with *raw_query*
         so titles that contain filter keywords ("Family Guy", "TV Patrol")
         still match.
+
+        The local catalog only indexes Movies and Series, so searches for
+        other item types (episodes, music, …) always go to the API, and a
+        catalog miss falls back to an API search as a last resort.
         """
-        if self._catalog is not None and self._catalog.size > 0:
+        use_catalog = (
+            self._catalog is not None
+            and self._catalog.size > 0
+            and type_filter in (None, "Movie", "Series")
+        )
+        if use_catalog:
             items = self._catalog.search(query, limit, type_filter=type_filter, genre_hint=genre_hint, year=year)
         else:
             items = await self._api_search(query, limit, type_filter=type_filter)
@@ -121,10 +164,14 @@ class JellyfinClient:
         filtered = bool(type_filter or genre_hint or year)
         if not items and raw_query and (filtered or raw_query.strip().lower() != query.strip().lower()):
             _LOGGER.debug("Search fallback: retrying unfiltered with raw query %r", raw_query)
-            if self._catalog is not None and self._catalog.size > 0:
+            if use_catalog:
                 items = self._catalog.search(raw_query, limit)
             else:
                 items = await self._api_search(raw_query, limit)
+
+        if not items and use_catalog:
+            _LOGGER.debug("Catalog found nothing for %r; falling back to API search", query)
+            items = await self._api_search(raw_query or query, limit)
         return items
 
     async def _api_search(self, query: str, limit: int, type_filter: Optional[str] = None) -> list[MediaItem]:
@@ -146,7 +193,6 @@ class JellyfinClient:
         return [MediaItem.from_api(i, base) for i in items]
 
     async def _search_term(self, term: str, limit: int, item_types: str = "Movie,Series,Episode,Audio,MusicAlbum") -> list[dict]:
-        session = self._get_session()
         url = f"{self._auth.base_url()}/Items"
         params = {
             "SearchTerm": term,
@@ -156,14 +202,12 @@ class JellyfinClient:
             "Fields": "Genres,ImageTags",
             "EnableImages": "true",
         }
-        async with session.get(url, params=params, headers=self._h()) as resp:
-            data = await resp.json(content_type=None)
+        data = await self._get_json(url, params)
         return data.get("Items", [])
 
     async def async_build_catalog(self) -> None:
         """Fetch all Movies and Series and build the local search catalog."""
         from .catalog import JellyfinCatalog
-        session = self._get_session()
         base = self._auth.base_url()
         url = f"{base}/Items"
         all_items: list[dict] = []
@@ -180,15 +224,19 @@ class JellyfinClient:
                 "EnableImages": "false",
                 "EnableTotalRecordCount": "true",
             }
-            async with session.get(url, params=params, headers=self._h()) as resp:
-                data = await resp.json(content_type=None)
+            data = await self._get_json(url, params)
             page = data.get("Items", [])
             total = data.get("TotalRecordCount", 0)
             all_items.extend(page)
             _LOGGER.debug("Catalog fetch: %d/%d", len(all_items), total)
-            if len(all_items) >= total or not page:
+            # Advance by items actually received — a server may return fewer
+            # than page_size per page; trusting page_size would skip items.
+            if not page or (total and len(all_items) >= total):
                 break
-            start += page_size
+            if len(all_items) >= 100_000:  # runaway guard for servers with broken pagination
+                _LOGGER.warning("Catalog fetch aborted at %d items", len(all_items))
+                break
+            start += len(page)
 
         media_items = [MediaItem.from_api(i, base) for i in all_items]
         catalog = JellyfinCatalog()
@@ -196,13 +244,16 @@ class JellyfinClient:
         self._catalog = catalog
 
     async def async_get_recently_added(self, library_id: Optional[str] = None, limit: int = 20) -> list[MediaItem]:
-        session = self._get_session()
         url = f"{self._auth.base_url()}/Items/Latest"
         params: dict[str, Any] = {"Limit": limit, "Fields": "Genres,ImageTags", "EnableImages": "true"}
+        # /Items/Latest resolves the user from the token; an API key carries no
+        # user, so pass an explicit UserId whenever one can be resolved.
+        user_id = await self._async_effective_user_id()
+        if user_id:
+            params["UserId"] = user_id
         if library_id:
             params["ParentId"] = library_id
-        async with session.get(url, params=params, headers=self._h()) as resp:
-            data = await resp.json(content_type=None)
+        data = await self._get_json(url, params)
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in (data or [])]
 
@@ -218,61 +269,58 @@ class JellyfinClient:
           3. First episode of the series (S1E1)
         Returns None if no episodes found.
         """
-        session = self._get_session()
         base = self._auth.base_url()
+        user_id = await self._async_effective_user_id(user_id)
 
         # Season-specific: jump straight to S{n}E1
         if season_number is not None:
-            ep_url = f"{base}/Shows/{series_id}/Episodes"
-            async with session.get(ep_url, params={
-                "UserId": user_id,
+            ep_params: dict[str, Any] = {
                 "Season": season_number,
                 "Limit": 1,
                 "SortBy": "SortName",
                 "Fields": "UserData",
-            }, headers=self._h()) as resp:
-                ep_data = await resp.json(content_type=None)
+            }
+            if user_id:
+                ep_params["UserId"] = user_id
+            ep_data = await self._get_json(f"{base}/Shows/{series_id}/Episodes", ep_params)
             items = ep_data.get("Items", [])
             if items:
                 ep = items[0]
                 ticks = ep.get("UserData", {}).get("PlaybackPositionTicks", 0)
-                _LOGGER.debug("Series play target: season %d first ep %r ticks=%d", season_number, ep.get("Name"), ticks)
+                _LOGGER.debug("Series play target: season %s first ep %r ticks=%s", season_number, ep.get("Name"), ticks)
                 return ep["Id"], ticks
-            _LOGGER.warning("No episodes found for series %s season %d", series_id, season_number)
+            _LOGGER.warning("No episodes found for series %s season %s", series_id, season_number)
             return None
 
-        # 1. In-progress episode
-        resume_url = f"{base}/Users/{user_id}/Items/Resume"
-        async with session.get(resume_url, params={
-            "ParentId": series_id, "Limit": 1, "MediaTypes": "Video",
-        }, headers=self._h()) as resp:
-            resume_data = await resp.json(content_type=None)
-        resume_items = resume_data.get("Items", [])
-        if resume_items:
-            ep = resume_items[0]
-            ticks = ep.get("UserData", {}).get("PlaybackPositionTicks", 0)
-            _LOGGER.debug("Series play target: resuming %r at tick %d", ep.get("Name"), ticks)
-            return ep["Id"], ticks
+        # 1. In-progress episode (requires a resolved user)
+        if user_id:
+            resume_data = await self._get_json(
+                f"{base}/Users/{user_id}/Items/Resume",
+                {"ParentId": series_id, "Limit": 1, "MediaTypes": "Video"},
+            )
+            resume_items = resume_data.get("Items", [])
+            if resume_items:
+                ep = resume_items[0]
+                ticks = ep.get("UserData", {}).get("PlaybackPositionTicks", 0)
+                _LOGGER.debug("Series play target: resuming %r at tick %d", ep.get("Name"), ticks)
+                return ep["Id"], ticks
 
-        # 2. NextUp
-        nextup_url = f"{base}/Shows/NextUp"
-        async with session.get(nextup_url, params={
-            "SeriesId": series_id, "UserId": user_id, "Limit": 1,
-            "Fields": "UserData",
-        }, headers=self._h()) as resp:
-            nextup_data = await resp.json(content_type=None)
-        nextup_items = nextup_data.get("Items", [])
-        if nextup_items:
-            ep = nextup_items[0]
-            _LOGGER.debug("Series play target: next up %r", ep.get("Name"))
-            return ep["Id"], 0
+            # 2. NextUp
+            nextup_data = await self._get_json(
+                f"{base}/Shows/NextUp",
+                {"SeriesId": series_id, "UserId": user_id, "Limit": 1, "Fields": "UserData"},
+            )
+            nextup_items = nextup_data.get("Items", [])
+            if nextup_items:
+                ep = nextup_items[0]
+                _LOGGER.debug("Series play target: next up %r", ep.get("Name"))
+                return ep["Id"], 0
 
         # 3. First episode
-        ep1_url = f"{base}/Shows/{series_id}/Episodes"
-        async with session.get(ep1_url, params={
-            "UserId": user_id, "Limit": 1, "SortBy": "SortName",
-        }, headers=self._h()) as resp:
-            ep1_data = await resp.json(content_type=None)
+        ep1_params: dict[str, Any] = {"Limit": 1, "SortBy": "SortName"}
+        if user_id:
+            ep1_params["UserId"] = user_id
+        ep1_data = await self._get_json(f"{base}/Shows/{series_id}/Episodes", ep1_params)
         ep1_items = ep1_data.get("Items", [])
         if ep1_items:
             ep = ep1_items[0]
@@ -282,31 +330,33 @@ class JellyfinClient:
         return None
 
     async def async_get_resume_items(self, user_id: str, limit: int = 10) -> list[MediaItem]:
-        session = self._get_session()
+        user_id = await self._async_effective_user_id(user_id)
+        if not user_id:
+            _LOGGER.warning("No Jellyfin user id available for resume items")
+            return []
         url = f"{self._auth.base_url()}/Users/{user_id}/Items/Resume"
         params = {"Limit": limit, "Fields": "Genres,ImageTags", "EnableImages": "true", "MediaTypes": "Video"}
-        async with session.get(url, params=params, headers=self._h()) as resp:
-            data = await resp.json(content_type=None)
+        data = await self._get_json(url, params)
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in data.get("Items", [])]
 
     async def async_get_favorites(self, user_id: str, limit: int = 50) -> list[MediaItem]:
-        session = self._get_session()
+        user_id = await self._async_effective_user_id(user_id)
+        if not user_id:
+            _LOGGER.warning("No Jellyfin user id available for favorites")
+            return []
         url = f"{self._auth.base_url()}/Users/{user_id}/Items"
         params = {"IsFavorite": "true", "Recursive": "true", "Limit": limit, "Fields": "Genres,ImageTags", "EnableImages": "true"}
-        async with session.get(url, params=params, headers=self._h()) as resp:
-            data = await resp.json(content_type=None)
+        data = await self._get_json(url, params)
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in data.get("Items", [])]
 
     async def async_get_by_genre(self, genre: str, library_id: Optional[str] = None) -> list[MediaItem]:
-        session = self._get_session()
         url = f"{self._auth.base_url()}/Items"
         params: dict[str, Any] = {"Genres": genre, "Recursive": "true", "Fields": "Genres,ImageTags", "EnableImages": "true", "SortBy": "Random", "Limit": 50}
         if library_id:
             params["ParentId"] = library_id
-        async with session.get(url, params=params, headers=self._h()) as resp:
-            data = await resp.json(content_type=None)
+        data = await self._get_json(url, params)
         base = self._auth.base_url()
         return [MediaItem.from_api(i, base) for i in data.get("Items", [])]
 
@@ -315,11 +365,8 @@ class JellyfinClient:
     # ------------------------------------------------------------------
 
     async def async_get_sessions(self) -> list[PlaybackSession]:
-        session = self._get_session()
-        url = f"{self._auth.base_url()}/Sessions"
-        async with session.get(url, headers=self._h()) as resp:
-            data = await resp.json(content_type=None)
-        _LOGGER.debug("Jellyfin get_sessions: status=%s count=%d", resp.status, len(data or []))
+        data = await self._get_json(f"{self._auth.base_url()}/Sessions")
+        _LOGGER.debug("Jellyfin get_sessions: count=%d", len(data or []))
         base = self._auth.base_url()
         return [PlaybackSession.from_api(s, base) for s in (data or [])]
 
@@ -331,12 +378,21 @@ class JellyfinClient:
         max_bitrate_kbps: Optional[int] = None,
     ) -> None:
         session = self._get_session()
-        url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing"
+        base = self._auth.base_url()
+        if max_bitrate_kbps:
+            # The Play endpoint has no bitrate parameter — quality caps go
+            # through the SetMaxStreamingBitrate general command instead.
+            cmd_url = f"{base}/Sessions/{session_id}/Command"
+            payload = {
+                "Name": "SetMaxStreamingBitrate",
+                "Arguments": {"Bitrate": str(max_bitrate_kbps * 1000)},
+            }
+            async with session.post(cmd_url, json=payload, headers=self._h()) as resp:
+                await resp.read()
+        url = f"{base}/Sessions/{session_id}/Playing"
         params: dict[str, Any] = {"playCommand": "PlayNow", "itemIds": item_id}
         if start_ticks:
             params["startPositionTicks"] = start_ticks
-        if max_bitrate_kbps:
-            params["MaxStreamingBitrate"] = max_bitrate_kbps * 1000
         async with session.post(url, params=params, headers=self._h()) as resp:
             await resp.read()
         _LOGGER.debug("Play command sent: session=%s item=%s ticks=%d bitrate=%s", session_id, item_id, start_ticks, max_bitrate_kbps)
@@ -369,6 +425,9 @@ class JellyfinClient:
 
     async def async_set_favorite(self, user_id: str, item_id: str, is_favorite: bool = True) -> None:
         """Add or remove an item from the user's favorites."""
+        user_id = await self._async_effective_user_id(user_id)
+        if not user_id:
+            raise ConnectionError("No Jellyfin user id available for favorites")
         session = self._get_session()
         url = f"{self._auth.base_url()}/Users/{user_id}/FavoriteItems/{item_id}"
         if is_favorite:
@@ -381,16 +440,17 @@ class JellyfinClient:
 
     async def async_get_latest_episode(self, series_id: str, user_id: str) -> Optional[tuple[str, str]]:
         """Return (episode_id, episode_name) of the most recently aired episode."""
-        http_session = self._get_session()
+        user_id = await self._async_effective_user_id(user_id)
         url = f"{self._auth.base_url()}/Shows/{series_id}/Episodes"
-        async with http_session.get(url, params={
-            "UserId": user_id,
+        params: dict[str, Any] = {
             "SortBy": "PremiereDate",
             "SortOrder": "Descending",
             "Limit": 1,
             "Fields": "PremiereDate",
-        }, headers=self._h()) as resp:
-            data = await resp.json(content_type=None)
+        }
+        if user_id:
+            params["UserId"] = user_id
+        data = await self._get_json(url, params)
         items = data.get("Items", [])
         if items:
             ep = items[0]
@@ -425,13 +485,13 @@ class JellyfinClient:
         # Fetch item details including chapters
         http_session = self._get_session()
         url = f"{self._auth.base_url()}/Items/{target.item.id}"
-        async with http_session.get(url, params={"Fields": "Chapters"}, headers=self._h()) as resp:
-            data = await resp.json(content_type=None)
+        data = await self._get_json(url, {"Fields": "Chapters"})
 
         chapters = data.get("Chapters", [])
         seek_ticks: Optional[int] = None
         for i, ch in enumerate(chapters):
-            if "intro" in ch.get("Name", "").lower():
+            # Chapter names can be JSON null — never assume a string
+            if "intro" in (ch.get("Name") or "").lower():
                 # Seek to start of next chapter after intro
                 if i + 1 < len(chapters):
                     seek_ticks = chapters[i + 1]["StartPositionTicks"]

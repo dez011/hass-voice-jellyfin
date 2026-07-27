@@ -84,9 +84,14 @@ class YearParser:
     def parse(self, result: ParsedQuery) -> ParsedQuery:
         m = self._PATTERN.search(result.query)
         if m:
+            remaining = (result.query[:m.start()] + result.query[m.end():]).strip()
+            remaining = re.sub(r"\s{2,}", " ", remaining)
+            if not remaining:
+                # The number IS the title ("play 2012", "play 1917") —
+                # stripping it would leave nothing to search for.
+                return result
             result.year = int(m.group())
-            result.query = (result.query[:m.start()] + result.query[m.end():]).strip()
-            result.query = re.sub(r"\s{2,}", " ", result.query)
+            result.query = remaining
         return result
 
 

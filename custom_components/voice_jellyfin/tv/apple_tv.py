@@ -27,8 +27,10 @@ KEY_MAP: dict[str, str] = {
     KEY_SELECT: "select",
     KEY_BACK: "menu",
     KEY_HOME: "top_menu",
-    KEY_PLAY: "play_pause",
-    KEY_PAUSE: "play_pause",
+    # Distinct play/pause — mapping both to play_pause made "pause" resume
+    # playback whenever the player was already paused.
+    KEY_PLAY: "play",
+    KEY_PAUSE: "pause",
     KEY_STOP: "stop",
     KEY_FAST_FORWARD: "skip_forward",
     KEY_REWIND: "skip_backward",

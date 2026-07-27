@@ -34,9 +34,17 @@ class NavigationModeSwitch(VoiceJellyfinEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs: object) -> None:
         if self.coordinator.navigation_mode:
             await self.coordinator.navigation_mode.async_activate()
-        self.async_write_ha_state()
+        self._push_nav_state(True)
 
     async def async_turn_off(self, **kwargs: object) -> None:
         if self.coordinator.navigation_mode:
             await self.coordinator.navigation_mode.async_deactivate()
+        self._push_nav_state(False)
+
+    def _push_nav_state(self, active: bool) -> None:
+        """Update coordinator data immediately so the UI doesn't snap back
+        to the stale value until the next 30s poll."""
+        data = dict(self.coordinator.data or {})
+        data["navigation_active"] = active
+        self.coordinator.async_set_updated_data(data)
         self.async_write_ha_state()

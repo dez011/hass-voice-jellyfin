@@ -56,6 +56,14 @@ class ButtonTrigger:
         if new_state is None:
             return
 
+        # Only real state TRANSITIONS count. Attribute-only updates re-fire
+        # state_changed with the same state (a light stuck "on" would re-arm
+        # nav mode on every brightness change), and HA-startup events carry
+        # old_state=None.
+        old_state = event.data.get("old_state")
+        if old_state is None or str(old_state.state).lower() == str(new_state.state).lower():
+            return
+
         state_str = str(new_state.state).lower()
         if state_str in _TRIGGER_STATES:
             _LOGGER.debug(

@@ -97,12 +97,11 @@ def async_register_services(hass: HomeAssistant) -> None:
 
     async def handle_play(call: ServiceCall) -> None:
         query = call.data["query"]
-        library_id = call.data.get("library_id")
-        cmd = f"play {query}"
-        if library_id:
-            cmd += f" in library {library_id}"
+        # Note: library_id is accepted for backwards compatibility but the
+        # command pipeline searches across all libraries; appending the raw
+        # GUID to the query would corrupt the search text.
         for coordinator in _get_coordinators():
-            await coordinator.async_send_command(cmd)
+            await coordinator.async_send_command(f"play {query}")
 
     async def handle_search(call: ServiceCall) -> None:
         query = call.data["query"]
@@ -121,24 +120,28 @@ def async_register_services(hass: HomeAssistant) -> None:
         for coordinator in _get_coordinators():
             client = coordinator.jellyfin_client
             if client:
-                if not session_id:
+                # Resolve per coordinator — a session id discovered on one
+                # server must not leak to the next coordinator's server.
+                sid = session_id
+                if not sid:
                     sessions = await client.async_get_sessions()
                     active = next((s for s in sessions if s.item), None)
-                    session_id = active.id if active else None
-                if session_id:
-                    await client.async_pause(session_id)
+                    sid = active.id if active else None
+                if sid:
+                    await client.async_pause(sid)
 
     async def handle_stop(call: ServiceCall) -> None:
         session_id = call.data.get("session_id")
         for coordinator in _get_coordinators():
             client = coordinator.jellyfin_client
             if client:
-                if not session_id:
+                sid = session_id
+                if not sid:
                     sessions = await client.async_get_sessions()
                     active = next((s for s in sessions if s.item), None)
-                    session_id = active.id if active else None
-                if session_id:
-                    await client.async_stop(session_id)
+                    sid = active.id if active else None
+                if sid:
+                    await client.async_stop(sid)
 
     async def handle_navigate(call: ServiceCall) -> None:
         direction = call.data["direction"]

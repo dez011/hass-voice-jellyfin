@@ -27,6 +27,12 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _normalize_phrase(text: str) -> str:
+    """Lowercase and strip everything but letters/digits/spaces."""
+    return "".join(c for c in text.lower() if c.isalnum() or c.isspace()).strip()
+
+
 # Reverse direction map for REVERSE_PATTERNS
 _REVERSE_KEY_MAP: dict[str, str] = {
     "up": "down",
@@ -181,8 +187,9 @@ class NavigationMode:
         """
         normalized = text.lower().strip()
 
-        # Check for hot mic toggle phrase first — works in both modes
-        if self.hot_mic_active and normalized == self._get_hot_mic_phrase():
+        # Check for hot mic toggle phrase first. STT often appends
+        # punctuation ("Hey Jellyfin.") so compare alphanumerics only.
+        if self.hot_mic_active and _normalize_phrase(normalized) == _normalize_phrase(self._get_hot_mic_phrase()):
             await self.async_deactivate_hot_mic()
             return True
 
@@ -201,6 +208,16 @@ class NavigationMode:
         if not self.is_active:
             return False
 
+        # Exact phrase lookup first — an explicit command ("go up", "select")
+        # must never be hijacked by a repeat/reverse substring ("continue" in
+        # "continue watching", "more" in "move up more").
+        key = VOICE_TO_KEY.get(normalized)
+        if key:
+            await self._send_key(key)
+            self._last_key = key
+            self._reset_timeout()
+            return True
+
         # Check repeat patterns
         if any(p in normalized for p in REPEAT_PATTERNS):
             if self._last_key:
@@ -217,14 +234,11 @@ class NavigationMode:
                     self._reset_timeout()
                     return True
 
-        # Direct phrase lookup
-        key = VOICE_TO_KEY.get(normalized)
-        if key is None:
-            key = next(
-                (v for k, v in VOICE_TO_KEY.items() if normalized.startswith(k)),
-                None,
-            )
-
+        # Prefix lookup last ("go up please" → "go up")
+        key = next(
+            (v for k, v in VOICE_TO_KEY.items() if normalized.startswith(k)),
+            None,
+        )
         if key:
             await self._send_key(key)
             self._last_key = key

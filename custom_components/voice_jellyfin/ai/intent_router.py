@@ -154,7 +154,7 @@ class IntentRouter:
                 messages=context.get_messages(),
                 system_prompt=self._system_prompt,
             )
-            result = self._parse(raw)
+            result = self._parse(raw, fallback_query=text)
         except Exception as exc:
             _LOGGER.error("AI query failed: %s", exc)
             result = IntentResult(
@@ -172,8 +172,13 @@ class IntentRouter:
     # Internal
     # ------------------------------------------------------------------
 
-    def _parse(self, raw: str) -> IntentResult:
-        """Parse raw JSON from the AI into an IntentResult."""
+    def _parse(self, raw: str, fallback_query: str = "") -> IntentResult:
+        """Parse raw JSON from the AI into an IntentResult.
+
+        On unparseable output, fall back to a SEARCH for the user's ORIGINAL
+        text (*fallback_query*) — never for the AI's reply, which would send
+        strings like "Sorry, I couldn't understand" to Jellyfin.
+        """
         raw = raw.strip()
         # Strip markdown fences if present
         if raw.startswith("```"):
@@ -181,16 +186,26 @@ class IntentRouter:
             raw = "\n".join(
                 line for line in lines if not line.startswith("```")
             ).strip()
+        data: Any = None
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
+            # The model may wrap the JSON in prose ("Here is the JSON: {...}")
+            start, end = raw.find("{"), raw.rfind("}")
+            if start != -1 and end > start:
+                try:
+                    data = json.loads(raw[start:end + 1])
+                except json.JSONDecodeError:
+                    data = None
+        if not isinstance(data, dict):
             _LOGGER.warning("AI returned non-JSON: %s", raw[:200])
-            return IntentResult(intent="SEARCH", params={"query": raw})
+            return IntentResult(intent="SEARCH", params={"query": fallback_query or raw})
 
+        params = data.get("params")
         return IntentResult(
-            intent=data.get("intent", "SEARCH").upper(),
-            params=data.get("params", {}),
-            speech_reply=data.get("speech", ""),
+            intent=str(data.get("intent", "SEARCH")).upper(),
+            params=params if isinstance(params, dict) else {},
+            speech_reply=data.get("speech") or "",
         )
 
     async def _dispatch(
@@ -252,8 +267,12 @@ class IntentRouter:
                 if self._nav:
                     await self._nav.async_deactivate()
             elif intent in ("REPEAT",):
-                if context.last_action:
-                    result.speech_reply = f"Repeating {context.last_action}."
+                last_key = getattr(self._nav, "_last_key", None) if self._nav else None
+                if last_key:
+                    await self._send_key(last_key)
+                    result.speech_reply = result.speech_reply or "Repeating."
+                else:
+                    result.speech_reply = result.speech_reply or "Nothing to repeat."
             elif intent == "REVERSE":
                 await self._send_key("back")
             elif intent == "SELECT":
@@ -266,6 +285,11 @@ class IntentRouter:
                     amount = 1
                 for _ in range(amount):
                     await self._send_key(direction)
+            else:
+                # The model invented an intent outside the schema — don't
+                # silently report success ("Done.") for an action never taken.
+                _LOGGER.warning("Unknown intent from AI: %s", intent)
+                result.speech_reply = result.speech_reply or "Sorry, I can't do that yet."
         except Exception as exc:
             _LOGGER.error("Intent dispatch error for %s: %s", intent, exc)
             result.speech_reply = result.speech_reply or "Sorry, that didn't work."
@@ -289,7 +313,13 @@ class IntentRouter:
 
         from ..jellyfin.query_parser import parse_query
         pq = parse_query(raw_query)
-        season_number: Optional[int] = result.params.get("season")
+        season_number: Optional[int] = None
+        try:
+            raw_season = result.params.get("season")
+            if raw_season is not None:
+                season_number = int(raw_season)  # models may emit "3" as a string
+        except (ValueError, TypeError):
+            season_number = None
         _LOGGER.debug("Play parsed: raw=%r query=%r type=%s year=%s genre=%s season=%s",
                       pq.raw, pq.query, pq.type_filter, pq.year, pq.genre_hint, season_number)
 
@@ -325,7 +355,7 @@ class IntentRouter:
         await self._ensure_tv_awake()
         await self._jellyfin.async_play(session.id, play_id, start_ticks=start_ticks)
         result.media_title = item.name
-        if season_number:
+        if season_number is not None:
             result.speech_reply = result.speech_reply or f"Playing {item.name} season {season_number}."
         else:
             result.speech_reply = result.speech_reply or f"Playing {item.name}."
@@ -383,8 +413,9 @@ class IntentRouter:
             result.media_title = name
             result.speech_reply = result.speech_reply or f"Resuming {name}."
             return result
-        # No paused session — resume first in-progress item
-        user_id = params.get("user_id", self._jellyfin._auth.user_id or "")
+        # No paused session — resume first in-progress item.
+        # `or` (not a .get default) so a JSON null user_id still falls back.
+        user_id = params.get("user_id") or self._jellyfin._auth.user_id or ""
         title = await self._jellyfin.async_resume(user_id)
         if title:
             result.media_title = title
@@ -466,19 +497,21 @@ class IntentRouter:
             result.speech_reply = "Nothing is playing."
             return result
 
-        # Move index
+        # Compute the new index locally; commit only after the restart
+        # succeeds so a failed call doesn't desync the tracked quality step.
         if self._bitrate_idx < 0:
             # Currently auto — start from top or bottom depending on direction
-            self._bitrate_idx = len(self._bitrate_presets) - 1 if direction < 0 else 0
+            new_idx = len(self._bitrate_presets) - 1 if direction < 0 else 0
         else:
-            self._bitrate_idx = max(0, min(len(self._bitrate_presets) - 1, self._bitrate_idx + direction))
+            new_idx = max(0, min(len(self._bitrate_presets) - 1, self._bitrate_idx + direction))
 
-        bitrate = self._bitrate_presets[self._bitrate_idx]
+        bitrate = self._bitrate_presets[new_idx]
         item_id = active.item.id  # type: ignore[union-attr]
         pos = active.position_ticks
 
         await self._jellyfin.async_stop(active.id)
         await self._jellyfin.async_play(active.id, item_id, start_ticks=pos, max_bitrate_kbps=bitrate)
+        self._bitrate_idx = new_idx
 
         label = f"{bitrate // 1000} Mbps" if bitrate >= 1000 else f"{bitrate} kbps"
         result.speech_reply = result.speech_reply or f"Quality set to {label}."

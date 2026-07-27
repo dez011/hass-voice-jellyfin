@@ -55,6 +55,10 @@ class _ConfigFlow:
     def async_create_entry(self, **kw): return kw
     def add_suggested_values_to_schema(self, data_schema, suggested_values):
         return _add_suggested_values_to_schema(data_schema, suggested_values)
+    async def async_set_unique_id(self, unique_id):
+        self.unique_id = unique_id
+    def _abort_if_unique_id_configured(self):
+        pass
 _ce_mod = _make_module(
     "homeassistant.config_entries",
     ConfigEntry=_ConfigEntry,
