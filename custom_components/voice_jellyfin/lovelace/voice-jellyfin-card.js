@@ -212,13 +212,15 @@ class VoiceJellyfinCard extends HTMLElement {
       }
     `;
 
+    const esc = (v) => this._escapeHtml(v);
+
     this.shadowRoot.innerHTML = `
       <style>${styles}</style>
       <ha-card>
         <div class="header">
           <div style="display:flex;align-items:center;gap:8px;">
-            <div class="status-dot" title="${status}"></div>
-            <span class="title">${this._config.title}</span>
+            <div class="status-dot" title="${esc(status)}"></div>
+            <span class="title">${esc(this._config.title)}</span>
           </div>
           <div class="nav-badge">
             <span>Nav Mode</span>
@@ -228,19 +230,19 @@ class VoiceJellyfinCard extends HTMLElement {
         <div class="section">
           <div class="row">
             <span class="label">Status</span>
-            <span class="value">${status}</span>
+            <span class="value">${esc(status)}</span>
           </div>
           <div class="row">
             <span class="label">AI Provider</span>
-            <span class="value" title="${provider}">${provider}</span>
+            <span class="value" title="${esc(provider)}">${esc(provider)}</span>
           </div>
           <div class="row">
             <span class="label">Device</span>
-            <span class="value" title="${device}">${device}</span>
+            <span class="value" title="${esc(device)}">${esc(device)}</span>
           </div>
           <div class="row">
             <span class="label">Now Playing</span>
-            <span class="value" title="${lastMedia}">${lastMedia}</span>
+            <span class="value" title="${esc(lastMedia)}">${esc(lastMedia)}</span>
           </div>
         </div>
 
