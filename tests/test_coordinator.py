@@ -120,3 +120,104 @@ async def test_hot_mic_phrase_matches_with_punctuation(mock_hass, mock_config_en
     reply = await coordinator.async_send_command("Hey, Jellyfin!")
     nav.async_toggle_hot_mic.assert_awaited_once()
     assert "Hot mic" in reply
+
+
+# ---------------------------------------------------------------------------
+# async_handle_voice — the STT routing entry point
+# ---------------------------------------------------------------------------
+
+def _voice_coordinator(mock_hass, mock_config_entry):
+    coordinator = _make_coordinator(mock_hass, mock_config_entry)
+    nav = MagicMock()
+    nav.is_active = False
+    nav.hot_mic_active = False
+    nav.async_activate = AsyncMock()
+    nav.async_deactivate = AsyncMock()
+    nav.async_handle_command = AsyncMock(return_value=True)
+    coordinator.navigation_mode = nav
+    coordinator.async_send_command = AsyncMock(return_value="Done.")
+    return coordinator, nav
+
+
+@pytest.mark.asyncio
+async def test_voice_wake_phrase_activates_nav_mode(mock_hass, mock_config_entry):
+    coordinator, nav = _voice_coordinator(mock_hass, mock_config_entry)
+    reply = await coordinator.async_handle_voice("Navigation mode.")
+    nav.async_activate.assert_awaited_once()
+    coordinator.async_send_command.assert_not_called()
+    assert "on" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_voice_off_phrase_deactivates_nav_mode(mock_hass, mock_config_entry):
+    coordinator, nav = _voice_coordinator(mock_hass, mock_config_entry)
+    nav.is_active = True
+    reply = await coordinator.async_handle_voice("exit navigation mode")
+    nav.async_deactivate.assert_awaited_once()
+    assert "off" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_voice_routes_keys_while_nav_active(mock_hass, mock_config_entry):
+    coordinator, nav = _voice_coordinator(mock_hass, mock_config_entry)
+    nav.is_active = True
+    reply = await coordinator.async_handle_voice("down")
+    nav.async_handle_command.assert_awaited_once_with("down")
+    coordinator.async_send_command.assert_not_called()
+    assert reply == ""
+
+
+@pytest.mark.asyncio
+async def test_voice_falls_through_to_media_pipeline(mock_hass, mock_config_entry):
+    """Unrecognized nav phrases and normal speech reach the full pipeline."""
+    coordinator, nav = _voice_coordinator(mock_hass, mock_config_entry)
+    nav.is_active = True
+    nav.async_handle_command = AsyncMock(return_value=False)  # not a nav key
+    await coordinator.async_handle_voice("play inception")
+    coordinator.async_send_command.assert_awaited_once_with("play inception")
+
+
+@pytest.mark.asyncio
+async def test_voice_inactive_nav_goes_straight_to_pipeline(mock_hass, mock_config_entry):
+    coordinator, nav = _voice_coordinator(mock_hass, mock_config_entry)
+    await coordinator.async_handle_voice("play inception")
+    nav.async_handle_command.assert_not_called()
+    coordinator.async_send_command.assert_awaited_once_with("play inception")
+
+
+@pytest.mark.asyncio
+async def test_setup_uses_adb_controller_without_entity(mock_hass, mock_config_entry):
+    """tv_type android + adb_host but no media_player entity must produce a
+    working TV controller (previously tv_controller stayed None)."""
+    import custom_components.voice_jellyfin.navigation.trigger  # noqa: F401
+    import custom_components.voice_jellyfin.navigation.mode  # noqa: F401
+    from custom_components.voice_jellyfin.tv.adb import ADBTVController
+
+    data = dict(mock_config_entry.data)
+    data.pop("android_tv_entity", None)
+    data["tv_type"] = "android_tv"
+    data["adb_host"] = "192.168.1.50"
+    data["adb_port"] = 5555
+    mock_config_entry.data = data
+
+    coordinator = _make_coordinator(mock_hass, mock_config_entry)
+
+    def _consume_bg_task(coro, name=None):
+        coro.close()
+        return MagicMock()
+
+    mock_hass.async_create_background_task = MagicMock(side_effect=_consume_bg_task)
+
+    fake_client = MagicMock()
+    fake_client.async_connect = AsyncMock(return_value={"Version": "10.9"})
+
+    with patch("custom_components.voice_jellyfin.jellyfin.client.JellyfinClient", return_value=fake_client), \
+         patch("custom_components.voice_jellyfin.navigation.mode.NavigationMode"), \
+         patch("custom_components.voice_jellyfin.navigation.trigger.ButtonTrigger") as trigger_cls, \
+         patch("custom_components.voice_jellyfin.ai.providers.build_provider", new=AsyncMock(return_value=None)):
+        trigger_cls.return_value.async_attach = AsyncMock()
+        coordinator.async_refresh = AsyncMock()
+        await coordinator.async_setup()
+
+    assert isinstance(coordinator.tv_controller, ADBTVController)
+    assert coordinator._current_device == "adb://192.168.1.50:5555"

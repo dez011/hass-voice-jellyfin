@@ -32,7 +32,7 @@ def _make_hass_with_coordinator(coordinator):
     hass.data = {DOMAIN: {"entry-001": coordinator}}
     registered = {}
 
-    def _register(domain, svc, handler, schema=None):
+    def _register(domain, svc, handler, schema=None, **kwargs):
         registered[(domain, svc)] = handler
 
     def _has_service(domain, svc):
@@ -65,7 +65,7 @@ async def test_all_services_registered(hass_with_services):
         "navigate", "scroll", "select",
         "navigation_mode_on", "navigation_mode_off",
         "repeat_last_action", "go_home", "go_back",
-        "reindex_catalog",
+        "reindex_catalog", "voice_command",
     }
     registered_names = {svc for domain, svc in registered.keys() if domain == DOMAIN}
     assert registered_names == expected
@@ -211,7 +211,7 @@ async def test_service_pause_resolves_session_per_coordinator():
     hass.data = {DOMAIN: {"entry-a": coord_a, "entry-b": coord_b}}
     registered = {}
     hass.services.async_register = MagicMock(
-        side_effect=lambda d, s, h, schema=None: registered.__setitem__((d, s), h)
+        side_effect=lambda d, s, h, schema=None, **kw: registered.__setitem__((d, s), h)
     )
     hass.services.has_service = MagicMock(side_effect=lambda d, s: (d, s) in registered)
 
@@ -239,7 +239,7 @@ async def test_service_stop_resolves_session_per_coordinator():
     hass.data = {DOMAIN: {"entry-a": coord_a, "entry-b": coord_b}}
     registered = {}
     hass.services.async_register = MagicMock(
-        side_effect=lambda d, s, h, schema=None: registered.__setitem__((d, s), h)
+        side_effect=lambda d, s, h, schema=None, **kw: registered.__setitem__((d, s), h)
     )
     hass.services.has_service = MagicMock(side_effect=lambda d, s: (d, s) in registered)
 
@@ -265,3 +265,31 @@ async def test_service_pause_explicit_session_id_used_everywhere():
     call_obj.data = {"session_id": "explicit-1"}
     await hass._registered[(DOMAIN, "pause")](call_obj)
     coord.jellyfin_client.async_pause.assert_awaited_once_with("explicit-1")
+
+
+# ---------------------------------------------------------------------------
+# voice_command service — the STT → pipeline bridge
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_voice_command_routes_to_handle_voice(hass_with_services):
+    hass, coordinator, registered = hass_with_services
+    coordinator.async_handle_voice = AsyncMock(return_value="Playing Inception.")
+    handler = registered[(DOMAIN, "voice_command")]
+    call_obj = MagicMock()
+    call_obj.data = {"text": "play inception"}
+    call_obj.return_response = True
+    result = await handler(call_obj)
+    coordinator.async_handle_voice.assert_awaited_once_with("play inception")
+    assert result == {"speech": "Playing Inception."}
+
+
+@pytest.mark.asyncio
+async def test_voice_command_without_response_returns_none(hass_with_services):
+    hass, coordinator, registered = hass_with_services
+    coordinator.async_handle_voice = AsyncMock(return_value="ok")
+    handler = registered[(DOMAIN, "voice_command")]
+    call_obj = MagicMock()
+    call_obj.data = {"text": "pause"}
+    call_obj.return_response = False
+    assert await handler(call_obj) is None

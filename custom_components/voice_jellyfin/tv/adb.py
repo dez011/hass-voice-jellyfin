@@ -98,3 +98,59 @@ class ADBController:
                 f"-n {package}/.MainActivity"
             )
         await self.async_send_command(cmd)
+
+
+_KEYCODE_WAKEUP = 224
+
+
+class ADBTVController:
+    """TV controller speaking directly to a device over TCP ADB.
+
+    Presents the same interface as AndroidTVController (async_send_key,
+    async_launch_app, async_deep_link, async_wake, async_ensure_awake) so the
+    coordinator can use it when no media_player entity is configured — e.g.
+    a Fire TV without the androidtv integration.
+    """
+
+    def __init__(self, host: str, port: int = 5555) -> None:
+        self._adb = ADBController(host, port)
+        self._target = f"{host}:{port}"
+        self._connected = False
+
+    async def _ensure_connected(self) -> bool:
+        if not self._connected:
+            self._connected = await self._adb.async_connect()
+        return self._connected
+
+    async def async_send_key(self, key: str, repeat: int = 1) -> None:
+        from .remote import KEY_MAP
+        keycode = KEY_MAP.get(key)
+        if keycode is None:
+            _LOGGER.warning("Unknown key for ADB TV: %s", key)
+            return
+        await self._ensure_connected()
+        for _ in range(repeat):
+            await self._adb.async_key_event(keycode)
+
+    async def async_launch_app(self, package_name: str) -> bool:
+        from .deep_link import async_launch_jellyfin
+        await self._ensure_connected()
+        return await async_launch_jellyfin(self._adb, package=package_name)
+
+    async def async_deep_link(self, uri: str, package: str | None = None) -> bool:
+        await self._ensure_connected()
+        cmd = f"am start -a android.intent.action.VIEW -d '{uri}'"
+        if package:
+            cmd += f" -p {package}"
+        result = await self._adb.async_send_command(cmd)
+        return not ("error" in result.lower() or "exception" in result.lower())
+
+    async def async_wake(self) -> None:
+        await self._ensure_connected()
+        await self._adb.async_key_event(_KEYCODE_WAKEUP)
+
+    async def async_ensure_awake(self, timeout: float = 30.0) -> bool:
+        ok = await self._ensure_connected()
+        if ok:
+            await self._adb.async_key_event(_KEYCODE_WAKEUP)
+        return ok

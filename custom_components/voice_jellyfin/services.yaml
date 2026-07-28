@@ -1,3 +1,19 @@
+voice_command:
+  name: Voice Command
+  description: >
+    Route raw voice/STT text through the full Voice Jellyfin pipeline:
+    the navigation wake phrase, Navigation Mode key commands, hot mic, and
+    natural-language media commands. Returns the spoken reply as response
+    data ("speech") for TTS automations.
+  fields:
+    text:
+      name: Text
+      description: The transcribed voice command.
+      required: true
+      example: "play the latest episode of Bluey"
+      selector:
+        text:
+
 play:
   name: Play Media
   description: >
@@ -141,4 +157,9 @@ go_home:
 go_back:
   name: Go Back
   description: Press the Back button on the Android TV.
+  fields: {}
+
+reindex_catalog:
+  name: Re-index Media Catalog
+  description: Rebuild the local media search index from the Jellyfin library.
   fields: {}

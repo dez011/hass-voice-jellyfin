@@ -128,6 +128,7 @@ CATALOG_REINDEX_OPTIONS = {
 }
 
 # Services
+SERVICE_VOICE_COMMAND = "voice_command"
 SERVICE_REINDEX_CATALOG = "reindex_catalog"
 SERVICE_PLAY = "play"
 SERVICE_SEARCH = "search"

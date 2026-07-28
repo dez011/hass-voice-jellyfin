@@ -252,3 +252,76 @@ class TestAndroidTVController:
         ctrl = AndroidTVController(hass, "media_player.fire_tv")
         await ctrl.async_send_key(KEY_DOWN, repeat=3)
         assert hass.services.async_call.await_count == 3
+
+
+# ---------------------------------------------------------------------------
+# ADBTVController — direct-ADB TV controller used without a media_player
+# ---------------------------------------------------------------------------
+
+from custom_components.voice_jellyfin.tv.adb import ADBTVController
+
+
+class TestADBTVController:
+    @pytest.mark.asyncio
+    async def test_send_key_maps_to_keycode(self):
+        ctrl = ADBTVController("192.168.1.50")
+        ctrl._adb.async_connect = AsyncMock(return_value=True)
+        ctrl._adb.async_key_event = AsyncMock()
+        await ctrl.async_send_key("down")
+        ctrl._adb.async_key_event.assert_awaited_once_with(20)  # DPAD_DOWN
+
+    @pytest.mark.asyncio
+    async def test_send_key_repeat(self):
+        ctrl = ADBTVController("192.168.1.50")
+        ctrl._adb.async_connect = AsyncMock(return_value=True)
+        ctrl._adb.async_key_event = AsyncMock()
+        await ctrl.async_send_key("up", repeat=3)
+        assert ctrl._adb.async_key_event.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_unknown_key_ignored(self):
+        ctrl = ADBTVController("192.168.1.50")
+        ctrl._adb.async_connect = AsyncMock(return_value=True)
+        ctrl._adb.async_key_event = AsyncMock()
+        await ctrl.async_send_key("warp_speed")
+        ctrl._adb.async_key_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_connects_once_and_caches(self):
+        ctrl = ADBTVController("192.168.1.50")
+        ctrl._adb.async_connect = AsyncMock(return_value=True)
+        ctrl._adb.async_key_event = AsyncMock()
+        await ctrl.async_send_key("up")
+        await ctrl.async_send_key("down")
+        ctrl._adb.async_connect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_launch_app_uses_jellyfin_launcher(self):
+        ctrl = ADBTVController("192.168.1.50")
+        ctrl._adb.async_connect = AsyncMock(return_value=True)
+        ctrl._adb.async_send_command = AsyncMock(return_value="Starting: Intent")
+        ok = await ctrl.async_launch_app("org.jellyfin.androidtv")
+        assert ok
+        cmd = ctrl._adb.async_send_command.call_args[0][0]
+        assert "org.jellyfin.androidtv" in cmd
+
+    @pytest.mark.asyncio
+    async def test_ensure_awake_reflects_connect_result(self):
+        ctrl = ADBTVController("192.168.1.50")
+        ctrl._adb.async_connect = AsyncMock(return_value=False)
+        assert await ctrl.async_ensure_awake() is False
+
+        ctrl2 = ADBTVController("192.168.1.50")
+        ctrl2._adb.async_connect = AsyncMock(return_value=True)
+        ctrl2._adb.async_key_event = AsyncMock()
+        assert await ctrl2.async_ensure_awake() is True
+        ctrl2._adb.async_key_event.assert_awaited_once_with(224)  # WAKEUP
+
+    @pytest.mark.asyncio
+    async def test_deep_link_error_output_returns_false(self):
+        ctrl = ADBTVController("192.168.1.50")
+        ctrl._adb.async_connect = AsyncMock(return_value=True)
+        ctrl._adb.async_send_command = AsyncMock(
+            return_value="Error: Activity not found"
+        )
+        assert await ctrl.async_deep_link("jellyfin://openItem?id=x") is False

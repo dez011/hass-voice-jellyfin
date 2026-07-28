@@ -23,8 +23,13 @@ from .const import (
     CONF_TV_TYPE,
     CONF_ANDROID_TV_ENTITY,
     CONF_APPLE_TV_ENTITY,
+    CONF_ADB_HOST,
+    CONF_ADB_PORT,
     TV_TYPE_APPLE,
     TV_TYPE_ANDROID,
+    CONF_NAV_WAKE_PHRASE,
+    DEFAULT_NAV_WAKE_PHRASE,
+    CONF_NAV_CONFIRMATION_SPEECH,
     CONF_CATALOG_REINDEX_INTERVAL,
     DEFAULT_CATALOG_REINDEX_INTERVAL,
     CONF_PREFERRED_CLIENT_PACKAGE,
@@ -98,10 +103,17 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._current_device = apple_entity
         else:
             tv_entity = config.get(CONF_ANDROID_TV_ENTITY)
+            adb_host = config.get(CONF_ADB_HOST)
             if tv_entity:
                 from .tv.android_tv import AndroidTVController
                 self.tv_controller = AndroidTVController(self.hass, tv_entity)
                 self._current_device = tv_entity
+            elif adb_host:
+                # No media_player entity — drive the device over raw TCP ADB
+                from .tv.adb import ADBTVController
+                adb_port = config.get(CONF_ADB_PORT) or 5555
+                self.tv_controller = ADBTVController(adb_host, adb_port)
+                self._current_device = f"adb://{adb_host}:{adb_port}"
 
         # Navigation mode
         self.navigation_mode = NavigationMode(self.hass, self.entry, self)
@@ -171,6 +183,47 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Instantiate the configured AI provider."""
         from .ai.providers import build_provider
         self.ai_provider = await build_provider(self.hass, config)
+
+    # Phrases that exit Navigation Mode by voice
+    _NAV_OFF_PHRASES = frozenset({
+        "exit navigation mode", "navigation mode off", "exit navigation",
+        "stop navigation", "stop navigating", "leave navigation mode",
+    })
+
+    async def async_handle_voice(self, text: str) -> str:
+        """Entry point for raw voice/STT text (Assist, sentence triggers,
+        the voice_command service).
+
+        Routing order:
+          1. Nav wake phrase        → activate Navigation Mode
+          2. Nav off phrase         → deactivate Navigation Mode
+          3. Nav mode / hot mic on  → NavigationMode.async_handle_command
+          4. Everything else        → the full media command pipeline
+        """
+        from .navigation.mode import _normalize_phrase
+
+        merged = {**self.entry.data, **(self.entry.options or {})}
+        nav = self.navigation_mode
+        normalized = _normalize_phrase(text)
+
+        if nav:
+            confirm = merged.get(CONF_NAV_CONFIRMATION_SPEECH, True)
+            wake = str(merged.get(CONF_NAV_WAKE_PHRASE) or DEFAULT_NAV_WAKE_PHRASE)
+            if normalized == _normalize_phrase(wake):
+                await nav.async_activate()
+                self._last_command = text
+                return "Navigation mode on." if confirm else ""
+            if normalized in self._NAV_OFF_PHRASES:
+                if nav.is_active:
+                    await nav.async_deactivate()
+                    self._last_command = text
+                    return "Navigation mode off." if confirm else ""
+            if nav.is_active or nav.hot_mic_active:
+                self._last_command = text
+                handled = await nav.async_handle_command(text)
+                if handled:
+                    return ""
+        return await self.async_send_command(text)
 
     async def async_send_command(self, text: str, suppress_error_speech: bool = False) -> str:
         """Route a natural language command through AI and execute it."""

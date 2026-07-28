@@ -10,6 +10,7 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import (
     DOMAIN,
+    SERVICE_VOICE_COMMAND,
     SERVICE_PLAY,
     SERVICE_SEARCH,
     SERVICE_RESUME,
@@ -64,7 +65,17 @@ _SCROLL_SCHEMA = vol.Schema({
     vol.Optional("amount", default=1): vol.All(int, vol.Range(min=1, max=20)),
 })
 
+_VOICE_COMMAND_SCHEMA = vol.Schema({
+    vol.Required("text"): cv.string,
+})
+
 _EMPTY_SCHEMA = vol.Schema({})
+
+try:  # HA 2023.7+
+    from homeassistant.core import SupportsResponse
+    _RESPONSE_OPTIONAL = SupportsResponse.OPTIONAL
+except ImportError:  # pragma: no cover
+    _RESPONSE_OPTIONAL = None
 
 
 def async_register_services(hass: HomeAssistant) -> None:
@@ -193,6 +204,26 @@ def async_register_services(hass: HomeAssistant) -> None:
         for coordinator in _get_coordinators():
             await coordinator.async_reindex_catalog()
 
+    async def handle_voice_command(call: ServiceCall) -> Any:
+        """Route raw voice/STT text through the full pipeline.
+
+        This is the bridge between Assist / sentence triggers / voice
+        satellites and the integration: wake phrase, Navigation Mode keys,
+        hot mic, and media commands all flow through here. Returns the
+        spoken reply as a service response for TTS automations.
+        """
+        text = call.data["text"]
+        replies: list[str] = []
+        for coordinator in _get_coordinators():
+            reply = await coordinator.async_handle_voice(text)
+            if reply:
+                replies.append(reply)
+        if not _get_coordinators():
+            _LOGGER.warning("No Voice Jellyfin entries loaded")
+        if getattr(call, "return_response", False):
+            return {"speech": " ".join(replies)}
+        return None
+
     # ------------------------------------------------------------------
     # Registration
     # ------------------------------------------------------------------
@@ -218,3 +249,12 @@ def async_register_services(hass: HomeAssistant) -> None:
         if not hass.services.has_service(DOMAIN, svc_name):
             hass.services.async_register(DOMAIN, svc_name, handler, schema=schema)
             _LOGGER.debug("Registered service: %s.%s", DOMAIN, svc_name)
+
+    if not hass.services.has_service(DOMAIN, SERVICE_VOICE_COMMAND):
+        kwargs = {"schema": _VOICE_COMMAND_SCHEMA}
+        if _RESPONSE_OPTIONAL is not None:
+            kwargs["supports_response"] = _RESPONSE_OPTIONAL
+        hass.services.async_register(
+            DOMAIN, SERVICE_VOICE_COMMAND, handle_voice_command, **kwargs
+        )
+        _LOGGER.debug("Registered service: %s.%s", DOMAIN, SERVICE_VOICE_COMMAND)

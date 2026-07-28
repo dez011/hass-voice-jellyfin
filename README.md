@@ -17,7 +17,7 @@ Say natural language commands to search, play, resume, and navigate your media �
 - **Physical Accessibility Button** — Assign any HA entity to activate Navigation Mode with a single press
 - **Multiple AI Backends** — Ollama (local/private), OpenAI, Anthropic, Google Gemini, OpenRouter, or HA Conversation
 - **Android TV / ADB Control** — Send key events, launch apps, deep-link to specific Jellyfin items
-- **14 HA Services** — Automate from scripts, blueprints, or voice satellites
+- **15 HA Services** — Automate from scripts, blueprints, or voice satellites; `voice_command` bridges Assist/STT into the pipeline
 - **Custom Lovelace Card** — Live status dashboard with command history
 - **Conversation Context** — The AI remembers up to 10 turns for follow-up commands
 
@@ -64,6 +64,7 @@ All services are available under the `voice_jellyfin` domain:
 
 | Service | Description | Key fields |
 |---------|-------------|------------|
+| `voice_jellyfin.voice_command` | Route raw voice text through the full pipeline (wake phrase, nav mode, hot mic, media commands) | `text` |
 | `voice_jellyfin.play` | Search and play media | `query`, `library_id` |
 | `voice_jellyfin.search` | Search and return results | `query` |
 | `voice_jellyfin.resume` | Resume in-progress media | `user_id` |
@@ -78,6 +79,27 @@ All services are available under the `voice_jellyfin` domain:
 | `voice_jellyfin.go_home` | Press Home | — |
 | `voice_jellyfin.go_back` | Press Back | — |
 | `voice_jellyfin.reindex_catalog` | Rebuild the local media search index | — |
+
+### Hooking up voice
+
+`voice_command` is the entry point for spoken text. Wire your STT source
+(Assist sentence trigger, voice satellite, or any automation) to it and
+speak the response:
+
+```yaml
+triggers:
+  - trigger: conversation
+    command: "jellyfin {request}"
+actions:
+  - action: voice_jellyfin.voice_command
+    data:
+      text: "{{ trigger.slots.request }}"
+    response_variable: reply
+  - set_conversation_response: "{{ reply.speech }}"
+```
+
+Saying the configured wake phrase ("navigation mode") activates hands-free
+D-pad control; "exit navigation mode" leaves it.
 
 ---
 
