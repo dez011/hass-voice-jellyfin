@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -137,6 +138,22 @@ class IntentRouter:
         """
         context.add_turn("user", text)
 
+        # A previous PLAY was ambiguous — check if this command picks one
+        # of the offered titles ("the first one", "batman begins", "two").
+        if context.pending_choices:
+            choice = self._match_choice(text, context.pending_choices)
+            context.pending_choices = []
+            if choice is not None:
+                result = IntentResult(intent="PLAY", params={"query": choice.name})
+                try:
+                    result = await self._play_media_item(result, choice)
+                except Exception as exc:
+                    _LOGGER.error("Choice playback failed: %s", exc)
+                    result.speech_reply = result.speech_reply or "Sorry, that didn't work."
+                context.add_turn("assistant", result.speech_reply or "Done.")
+                context.last_action = result.intent
+                return result
+
         if not ai_enabled or provider is None:
             result = self._rule_based_intent(text)
             _LOGGER.debug(
@@ -156,12 +173,13 @@ class IntentRouter:
             )
             result = self._parse(raw, fallback_query=text)
         except Exception as exc:
-            _LOGGER.error("AI query failed: %s", exc)
-            result = IntentResult(
-                intent="SEARCH",
-                params={"query": text},
-                speech_reply="Sorry, I had trouble understanding that.",
+            # An unreachable AI backend must never be catastrophic — fall
+            # back to the rule-based intents so navigation, playback, and
+            # search keep working exactly as if AI were disabled.
+            _LOGGER.warning(
+                "AI provider unavailable (%s); using rule-based intent for %r", exc, text
             )
+            result = self._rule_based_intent(text)
 
         result = await self._dispatch(result, context)
         context.add_turn("assistant", result.speech_reply or "Done.")
@@ -334,7 +352,27 @@ class IntentRouter:
             result.speech_reply = f"I couldn't find anything matching '{raw_query}'."
             return result
 
-        item = items[0]
+        # Multiple distinct matches and none is an exact title match —
+        # ask instead of guessing, and remember the options so the next
+        # command ("the first one", "batman begins") can pick.
+        query_l = pq.query.strip().lower()
+        raw_l = pq.raw.strip().lower()
+        if len(items) > 1 and items[0].name.strip().lower() not in (query_l, raw_l):
+            choices = items[:3]
+            context.pending_choices = choices
+            names = ", ".join(
+                f"{i + 1}: {item.name}" + (f" ({item.year})" if item.year else "")
+                for i, item in enumerate(choices)
+            )
+            result.speech_reply = f"I found {names}. Which one?"
+            return result
+
+        return await self._play_media_item(result, items[0], season_number=season_number)
+
+    async def _play_media_item(
+        self, result: IntentResult, item: Any, season_number: Optional[int] = None
+    ) -> IntentResult:
+        """Play *item* on the active session (resolving series targets)."""
         sessions = await self._jellyfin.async_get_sessions()
         session = next(iter(sessions), None)
         if not session:
@@ -360,6 +398,36 @@ class IntentRouter:
         else:
             result.speech_reply = result.speech_reply or f"Playing {item.name}."
         return result
+
+    _ORDINAL_WORDS = {
+        "first": 0, "1st": 0, "one": 0, "1": 0,
+        "second": 1, "2nd": 1, "two": 1, "2": 1,
+        "third": 2, "3rd": 2, "three": 2, "3": 2,
+    }
+
+    def _match_choice(self, text: str, choices: list[Any]) -> Optional[Any]:
+        """Match a follow-up command against pending play choices.
+
+        Accepts ordinals ("the first one", "number two", "2") and title
+        matches ("batman begins"). Returns None when the utterance doesn't
+        look like a selection — the caller then routes it normally.
+        """
+        lower = text.strip().lower()
+        words = [w for w in re.findall(r"[a-z0-9]+", lower)
+                 if w not in ("the", "number", "play", "option", "pick", "choose")]
+        # Pure ordinal selection: everything left maps to one index
+        if words and all(w in self._ORDINAL_WORDS or w == "one" for w in words):
+            for w in words:
+                if w in self._ORDINAL_WORDS:
+                    idx = self._ORDINAL_WORDS[w]
+                    if idx < len(choices):
+                        return choices[idx]
+        # Title match
+        for item in choices:
+            name_l = item.name.strip().lower()
+            if lower == name_l or name_l in lower or lower in name_l:
+                return item
+        return None
 
     async def _handle_search(
         self, result: IntentResult, context: AIContext

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import TYPE_CHECKING, Optional
 
 from homeassistant.config_entries import ConfigEntry
@@ -31,6 +32,36 @@ _LOGGER = logging.getLogger(__name__)
 def _normalize_phrase(text: str) -> str:
     """Lowercase and strip everything but letters/digits/spaces."""
     return "".join(c for c in text.lower() if c.isalnum() or c.isspace()).strip()
+
+
+_WORD_NUMBERS: dict[str, int] = {
+    "one": 1, "once": 1, "two": 2, "twice": 2, "three": 3, "four": 4,
+    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}
+_MAX_KEY_REPEAT = 20
+
+_COUNT_SUFFIX = re.compile(
+    r"^(?P<phrase>.+?)[\s,]+(?P<count>\d{1,2}|" + "|".join(_WORD_NUMBERS) + r")(?:\s+times?)?$"
+)
+
+
+def _parse_repeat_count(normalized: str) -> tuple[str, int]:
+    """Split a trailing repeat count off a nav phrase.
+
+    "right five times" → ("right", 5); "up 3" → ("up", 3);
+    "right right right" → ("right", 3); anything else → (input, 1).
+    """
+    m = _COUNT_SUFFIX.match(normalized)
+    if m:
+        raw_count = m.group("count")
+        count = _WORD_NUMBERS.get(raw_count) or int(raw_count)
+        return m.group("phrase").strip(), max(1, min(count, _MAX_KEY_REPEAT))
+
+    tokens = normalized.split()
+    if len(tokens) > 1 and len(set(tokens)) == 1 and tokens[0] in VOICE_TO_KEY:
+        return tokens[0], min(len(tokens), _MAX_KEY_REPEAT)
+
+    return normalized, 1
 
 
 # Reverse direction map for REVERSE_PATTERNS
@@ -234,13 +265,19 @@ class NavigationMode:
                     self._reset_timeout()
                     return True
 
+        # Repeat counts: "right five times", "up 3", "right right right"
+        phrase, count = _parse_repeat_count(normalized)
+        key = VOICE_TO_KEY.get(phrase)
+
         # Prefix lookup last ("go up please" → "go up")
-        key = next(
-            (v for k, v in VOICE_TO_KEY.items() if normalized.startswith(k)),
-            None,
-        )
+        if key is None:
+            key = next(
+                (v for k, v in VOICE_TO_KEY.items() if phrase.startswith(k)),
+                None,
+            )
         if key:
-            await self._send_key(key)
+            for _ in range(count):
+                await self._send_key(key)
             self._last_key = key
             self._reset_timeout()
             return True

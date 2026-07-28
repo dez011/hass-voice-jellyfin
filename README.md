@@ -13,7 +13,9 @@ Say natural language commands to search, play, resume, and navigate your media �
 ## Features
 
 - **Natural Language Playback** — "Play the latest Breaking Bad episode", "Find something funny", "Resume what I was watching"
-- **Navigation Mode** — Hands-free D-pad control: "up", "down", "select", "back", etc.
+- **Navigation Mode** — Say the keyword once, then drive the TV hands-free: "up", "right five times", "select", "too far", until "exit navigation mode"
+- **Ask-when-ambiguous** — "play batman" with several matches asks "Which one?" and takes "the second one"
+- **Works without AI** — rule-based parsing covers everything; if a configured AI backend is unreachable it degrades gracefully instead of failing
 - **Physical Accessibility Button** — Assign any HA entity to activate Navigation Mode with a single press
 - **Multiple AI Backends** — Ollama (local/private), OpenAI, Anthropic, Google Gemini, OpenRouter, or HA Conversation
 - **Android TV / ADB Control** — Send key events, launch apps, deep-link to specific Jellyfin items
@@ -39,6 +41,7 @@ Say natural language commands to search, play, resume, and navigate your media �
 3. Restart HA and add the integration
 
 Full instructions: [docs/installation.md](docs/installation.md)
+How to talk to it once installed: [docs/usage.md](docs/usage.md)
 
 ---
 
