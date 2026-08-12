@@ -41,7 +41,7 @@ Valid intents and their params:
 - SKIP_INTRO   params: {{}} — skip the intro of the current episode
 - QUALITY_UP   params: {{}} — increase stream quality one step
 - QUALITY_DOWN params: {{}} — lower stream quality one step
-- SET_QUALITY  params: level ("lowest"|"low"|"medium"|"high"|"highest"|"auto") OR bitrate_kbps (int) — set an absolute quality cap; "auto" removes the cap
+- SET_QUALITY  params: level ("1".."5" on a 1-5 scale, or "lowest"|"low"|"medium"|"high"|"highest"|"auto") OR bitrate_kbps (int) — set an absolute quality cap; "auto" removes the cap
 - QUALITY_STATUS params: {{}} — report the current quality cap
 - FAVORITE     params: {{}} — add currently playing item to favorites
 - UNFAVORITE   params: {{}} — remove currently playing item from favorites
@@ -64,6 +64,7 @@ Examples:
 - "open Jellyfin" → OPEN_APP
 - "skip the intro" → SKIP_INTRO
 - "lower the quality" or "it's buffering" → QUALITY_DOWN
+- "quality three" or "set the quality to 3" → SET_QUALITY, level="3"
 - "set the quality to low" → SET_QUALITY, level="low"
 - "cap the bitrate at 3 megabits" → SET_QUALITY, bitrate_kbps=3000
 - "remove the quality limit" → SET_QUALITY, level="auto"
@@ -107,6 +108,21 @@ def _format_bitrate(kbps: int) -> str:
     if kbps >= 1000:
         return f"{kbps / 1000:g} megabits per second"
     return f"{kbps} kilobits per second"
+
+
+def _quality_label(kbps: int) -> str:
+    """Describe a cap as its level on the 1-5 scale plus the rate it means.
+
+    Saying both lets someone who can't see a screen keep track of where they
+    are on the scale.
+    """
+    if kbps <= 0:
+        return "unlimited"
+    from ..const import QUALITY_LEVEL_BY_KBPS
+
+    level = QUALITY_LEVEL_BY_KBPS.get(kbps)
+    rate = _format_bitrate(kbps)
+    return f"level {level}, {rate}" if level else rate
 
 
 class IntentRouter:
@@ -503,16 +519,27 @@ class IntentRouter:
         current = await self._current_bitrate_kbps()
 
         if current <= 0:
-            # Uncapped. Stepping down starts from the top preset; there is
-            # nothing above uncapped to step up to.
+            # Uncapped. Stepping down enters the scale at the top level; there
+            # is nothing above uncapped to step up to.
             if direction > 0:
                 result.speech_reply = result.speech_reply or "Quality is already unlimited."
                 return result
             target = presets[-1]
         else:
             new_idx = self._preset_index(current) + direction
-            # Stepping past the top preset means removing the cap entirely.
-            target = 0 if new_idx >= len(presets) else presets[max(0, new_idx)]
+            # The scale has ends. Say so rather than silently re-applying, so
+            # the user knows the command landed but changed nothing.
+            if new_idx >= len(presets):
+                result.speech_reply = result.speech_reply or (
+                    f"That's already the highest, {_quality_label(presets[-1])}."
+                )
+                return result
+            if new_idx < 0:
+                result.speech_reply = result.speech_reply or (
+                    f"That's already the lowest, {_quality_label(presets[0])}."
+                )
+                return result
+            target = presets[new_idx]
 
         return await self._apply_quality(result, target)
 
@@ -522,13 +549,13 @@ class IntentRouter:
         """Set an absolute cap from a named level or an explicit kbps value."""
         if not self._jellyfin:
             return result
-        from ..const import QUALITY_LEVELS_KBPS
+        from ..const import QUALITY_LEVELS_KBPS, QUALITY_MAX_KBPS
 
         target: Optional[int] = None
         raw_rate = params.get("bitrate_kbps")
         if raw_rate is not None:
             try:
-                target = max(0, int(raw_rate))
+                target = min(QUALITY_MAX_KBPS, max(0, int(raw_rate)))
             except (TypeError, ValueError):
                 _LOGGER.debug("Ignoring unparseable bitrate_kbps: %r", raw_rate)
         if target is None:
@@ -537,7 +564,7 @@ class IntentRouter:
                 target = QUALITY_LEVELS_KBPS[level]
         if target is None:
             result.speech_reply = result.speech_reply or (
-                "Tell me a level like low, medium or high, or give me a bitrate."
+                "Tell me a quality level from one to five, or give me a bitrate."
             )
             return result
 
@@ -550,7 +577,7 @@ class IntentRouter:
         if current <= 0:
             result.speech_reply = result.speech_reply or "Quality is unlimited — there's no bitrate cap set."
         else:
-            result.speech_reply = result.speech_reply or f"Quality is capped at {_format_bitrate(current)}."
+            result.speech_reply = result.speech_reply or f"Quality is at {_quality_label(current)}."
         return result
 
     async def _apply_quality(self, result: IntentResult, kbps: int) -> IntentResult:
@@ -570,7 +597,7 @@ class IntentRouter:
 
         self._bitrate_kbps = kbps
         self._bitrate_idx = self._preset_index(kbps) if kbps > 0 else -1
-        label = _format_bitrate(kbps)
+        label = _quality_label(kbps)
 
         sessions = await self._jellyfin.async_get_sessions()
         active = next((s for s in sessions if s.item), None)
@@ -735,6 +762,13 @@ class IntentRouter:
         "unlimited": "auto", "uncapped": "auto", "full": "auto",
         "original": "auto", "best": "auto", "default": "auto",
     }
+    _NUMBER_WORDS = {
+        "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    }
+    _BARE_NUMBER_RE = re.compile(
+        r"\b(\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten)\b"
+    )
     _QUALITY_RESET_RE = re.compile(r"\b(?:remove|clear|reset|lift|disable|undo|no)\b")
     _QUALITY_DOWN_WORDS = frozenset({"down", "lower", "reduce", "decrease", "drop", "worse", "less", "limit", "cap", "save"})
     _QUALITY_UP_WORDS = frozenset({"up", "raise", "increase", "better", "higher", "more", "improve"})
@@ -749,6 +783,19 @@ class IntentRouter:
             value = float(rate.group(1))
             kbps = int(value * 1000) if rate.group(2).startswith("m") else int(value)
             return IntentResult(intent="SET_QUALITY", params={"bitrate_kbps": kbps})
+
+        # A bare number on a quality command is a level on the 1-5 scale
+        # ("quality three"). Anything past the top of the scale is far more
+        # likely to be megabits ("bitrate to 12") than a level that isn't there.
+        bare = self._BARE_NUMBER_RE.search(lower)
+        if bare:
+            from ..const import QUALITY_MAX_LEVEL, QUALITY_MIN_LEVEL
+
+            token = bare.group(1)
+            value = self._NUMBER_WORDS[token] if token in self._NUMBER_WORDS else int(token)
+            if QUALITY_MIN_LEVEL <= value <= QUALITY_MAX_LEVEL:
+                return IntentResult(intent="SET_QUALITY", params={"level": str(value)})
+            return IntentResult(intent="SET_QUALITY", params={"bitrate_kbps": value * 1000})
 
         # "remove the quality limit", "no bitrate cap" — checked before the
         # direction words so the "limit"/"cap" in them doesn't read as "lower".

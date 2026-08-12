@@ -162,13 +162,20 @@ set_quality:
   fields:
     level:
       name: Level
-      description: Named quality level. "auto" removes the cap entirely.
+      description: >-
+        Quality level on the 1-5 scale (2, 4, 6, 8, 10 Mbps). The named
+        aliases map onto the same steps. "auto" removes the cap entirely.
       required: false
-      example: low
+      example: "3"
       selector:
         select:
           options:
             - auto
+            - "1"
+            - "2"
+            - "3"
+            - "4"
+            - "5"
             - lowest
             - low
             - medium

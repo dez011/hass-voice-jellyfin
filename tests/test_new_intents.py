@@ -135,13 +135,14 @@ async def test_quality_down_steps_to_next_lower_preset():
 
 
 @pytest.mark.asyncio
-async def test_quality_down_clamps_at_minimum():
+async def test_quality_down_at_the_bottom_says_so_without_reapplying():
     session = _playing_session()
     jellyfin = _quality_jellyfin(session, current_kbps=500)
 
-    await _route(jellyfin, "lower quality")
+    result = await _route(jellyfin, "lower quality")
 
-    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 500)
+    jellyfin.async_set_bitrate_limit.assert_not_awaited()
+    assert "lowest" in result.speech_reply.lower()
 
 
 @pytest.mark.asyncio
@@ -155,13 +156,15 @@ async def test_quality_up_steps_to_next_higher_preset():
 
 
 @pytest.mark.asyncio
-async def test_quality_up_past_top_preset_removes_the_cap():
+async def test_quality_up_at_the_top_says_so_without_reapplying():
     session = _playing_session()
     jellyfin = _quality_jellyfin(session, current_kbps=8000)
 
-    await _route(jellyfin, "higher quality")
+    result = await _route(jellyfin, "higher quality")
 
-    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 0)
+    # The scale has a top; removing the cap needs an explicit "auto".
+    jellyfin.async_set_bitrate_limit.assert_not_awaited()
+    assert "highest" in result.speech_reply.lower()
 
 
 @pytest.mark.asyncio
@@ -183,8 +186,8 @@ async def test_set_quality_named_level():
     result = await _route(jellyfin, "set the quality to low")
 
     assert result.intent == "SET_QUALITY"
-    # "low" resolves through QUALITY_LEVELS_KBPS, not the preset ladder.
-    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 1000)
+    # "low" is an alias for level 2 on the 1-5 scale.
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 4000)
 
 
 @pytest.mark.asyncio
@@ -224,7 +227,7 @@ async def test_set_quality_with_nothing_playing_still_applies():
 
     result = await _route(jellyfin, "set the quality to low")
 
-    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 1000)
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 4000)
     jellyfin.async_play.assert_not_awaited()
     assert "next thing you play" in result.speech_reply
 
@@ -674,3 +677,105 @@ def test_quality_phrases_route_without_ai(phrase, intent, params):
 def test_quality_matching_does_not_swallow_media_commands(phrase, intent):
     router = _make_router()
     assert router._rule_based_intent(phrase).intent == intent
+
+
+# ---------------------------------------------------------------------------
+# Numbered quality scale (1-5 → 2/4/6/8/10 Mbps)
+# ---------------------------------------------------------------------------
+
+from custom_components.voice_jellyfin.const import (  # noqa: E402
+    BITRATE_PRESETS_KBPS,
+    QUALITY_SCALE_KBPS,
+)
+
+
+def test_quality_scale_steps_by_two_megabits():
+    assert BITRATE_PRESETS_KBPS == [2000, 4000, 6000, 8000, 10000]
+    assert QUALITY_SCALE_KBPS[1] == 2000
+    assert QUALITY_SCALE_KBPS[3] == 6000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "phrase,expected_kbps",
+    [
+        ("quality one", 2000),
+        ("quality three", 6000),
+        ("quality five", 10000),
+        ("set the quality to 2", 4000),
+        ("quality level 4", 8000),
+    ],
+)
+async def test_numbered_quality_levels(phrase, expected_kbps):
+    jellyfin = _quality_jellyfin(session=None, current_kbps=0)
+
+    await _route(jellyfin, phrase, presets=BITRATE_PRESETS_KBPS)
+
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", expected_kbps)
+
+
+@pytest.mark.asyncio
+async def test_numbered_level_is_spoken_back_with_its_bitrate():
+    jellyfin = _quality_jellyfin(session=None, current_kbps=0)
+
+    result = await _route(jellyfin, "quality three", presets=BITRATE_PRESETS_KBPS)
+
+    assert "level 3" in result.speech_reply
+    assert "6 megabits per second" in result.speech_reply
+
+
+@pytest.mark.asyncio
+async def test_stepping_up_walks_the_two_megabit_ladder():
+    session = _playing_session()
+    jellyfin = _quality_jellyfin(session, current_kbps=2000)
+
+    await _route(jellyfin, "higher quality", presets=BITRATE_PRESETS_KBPS)
+
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 4000)
+
+
+@pytest.mark.asyncio
+async def test_stepping_down_walks_the_two_megabit_ladder():
+    session = _playing_session()
+    jellyfin = _quality_jellyfin(session, current_kbps=6000)
+
+    await _route(jellyfin, "lower quality", presets=BITRATE_PRESETS_KBPS)
+
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 4000)
+
+
+@pytest.mark.asyncio
+async def test_status_reports_the_level_number():
+    jellyfin = _quality_jellyfin(session=None, current_kbps=8000)
+
+    result = await _route(jellyfin, "what's the quality", presets=BITRATE_PRESETS_KBPS)
+
+    assert "level 4" in result.speech_reply
+
+
+@pytest.mark.asyncio
+async def test_number_above_the_scale_is_read_as_megabits():
+    jellyfin = _quality_jellyfin(session=None, current_kbps=0)
+
+    await _route(jellyfin, "set the bitrate to 12", presets=BITRATE_PRESETS_KBPS)
+
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 12000)
+
+
+@pytest.mark.parametrize(
+    "phrase,expected",
+    [
+        ("quality one", {"level": "1"}),
+        ("quality 5", {"level": "5"}),
+        ("set quality to three", {"level": "3"}),
+        # Past the top of the scale, a bare number means megabits.
+        ("set the bitrate to 12", {"bitrate_kbps": 12000}),
+        # An explicit unit always wins over the level reading.
+        ("set the quality to 3 mbps", {"bitrate_kbps": 3000}),
+    ],
+)
+def test_numbered_phrases_route_without_ai(phrase, expected):
+    router = _make_router()
+    result = router._rule_based_intent(phrase)
+    assert result.intent == "SET_QUALITY"
+    assert result.params == expected

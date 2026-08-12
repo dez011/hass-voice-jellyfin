@@ -90,17 +90,36 @@ Most Jellyfin clients bury the max-bitrate setting several menus deep, which
 makes it unreachable for anyone who can't navigate the client UI. These
 commands change it without touching the client:
 
+Quality is a **1–5 scale**, in even 2 Mbps steps, so it can be said out loud
+and kept track of without looking at anything:
+
+| Level | Cap | Alias |
+|-------|-----|-------|
+| 1 | 2 Mbps | `lowest` |
+| 2 | 4 Mbps | `low` |
+| 3 | 6 Mbps | `medium` |
+| 4 | 8 Mbps | `high` |
+| 5 | 10 Mbps | `highest` |
+| — | no cap | `auto` |
+
 | Say | Result |
 |-----|--------|
-| "lower the quality", "it keeps buffering" | Drop one step down the preset ladder |
-| "higher quality" | Move one step up; past the top preset the cap is removed |
-| "set the quality to low" | Jump straight to a named level |
-| "cap the bitrate at 3 megabits" | Set an explicit bitrate |
-| "remove the quality limit" | Remove the cap entirely |
-| "what's the bitrate?" | Report the current cap |
+| "quality three", "set the quality to 3" | Jump straight to that level |
+| "lower the quality", "it keeps buffering" | Step down one level (6 → 4 → 2) |
+| "higher quality" | Step up one level (2 → 4 → 6) |
+| "set the quality to low" | Use a word instead of a number |
+| "cap the bitrate at 3 megabits" | Set a bitrate off the scale entirely |
+| "remove the quality limit" | Remove the cap |
+| "what's the quality?" | "Quality is at level 3, 6 megabits per second" |
 
-Named levels are `lowest` (500 kbps), `low` (1 Mbps), `medium` (4 Mbps),
-`high` (8 Mbps), `highest` (20 Mbps) and `auto` (no cap).
+Stepping stops at either end of the scale and says so rather than silently
+doing nothing. Removing the cap is deliberate — it takes "auto" or "remove the
+quality limit", never an accidental step off the top. Spoken replies always
+name both the level and the bitrate, so the current setting is unambiguous.
+
+A bare number is read as a level when it falls on the scale and as megabits
+when it doesn't, so "quality three" and "set the bitrate to 12" both do the
+obvious thing. An explicit unit always wins.
 
 The cap is applied server-side, by setting `RemoteClientBitrateLimit` on the
 Jellyfin user's policy, so it works with clients that expose no quality

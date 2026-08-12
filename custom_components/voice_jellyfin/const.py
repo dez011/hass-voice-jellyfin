@@ -118,19 +118,44 @@ DEFAULT_ANNOUNCE_ON_PLAY = False
 DEFAULT_SKIP_FORWARD_SECONDS = 30
 DEFAULT_SKIP_BACK_SECONDS = 10
 
-BITRATE_PRESETS_KBPS = [500, 1000, 2000, 4000, 8000, 20000, 40000]  # kbps steps for quality up/down
+# Quality is a 1-5 scale so it can be said out loud ("quality three") and
+# tracked without seeing a screen. Even 2 Mbps steps: 2, 4, 6, 8, 10.
+QUALITY_SCALE_KBPS = {
+    1: 2000,
+    2: 4000,
+    3: 6000,
+    4: 8000,
+    5: 10000,
+}
+QUALITY_MIN_LEVEL = min(QUALITY_SCALE_KBPS)
+QUALITY_MAX_LEVEL = max(QUALITY_SCALE_KBPS)
 
-# Named quality levels usable by voice ("set the quality to low").
-# 0 means "no cap" — the server stops limiting and the client picks.
+# The same ladder drives "higher quality" / "lower quality" stepping.
+BITRATE_PRESETS_KBPS = [QUALITY_SCALE_KBPS[n] for n in sorted(QUALITY_SCALE_KBPS)]
+
+# Word aliases for the numbered levels, so "set the quality to low" still works.
 QUALITY_AUTO = "auto"
+QUALITY_LEVEL_ALIASES = {
+    "lowest": 1,
+    "low": 2,
+    "medium": 3,
+    "high": 4,
+    "highest": 5,
+}
+
+# Everything accepted as a `level`: "auto" (no cap), "1".."5", and the aliases.
+# 0 means "no cap" — the server stops limiting and the client picks.
 QUALITY_LEVELS_KBPS = {
     QUALITY_AUTO: 0,
-    "lowest": 500,
-    "low": 1000,
-    "medium": 4000,
-    "high": 8000,
-    "highest": 20000,
+    **{str(level): kbps for level, kbps in QUALITY_SCALE_KBPS.items()},
+    **{name: QUALITY_SCALE_KBPS[level] for name, level in QUALITY_LEVEL_ALIASES.items()},
 }
+
+# Reverse lookup for speaking a bitrate back as a level number.
+QUALITY_LEVEL_BY_KBPS = {kbps: level for level, kbps in QUALITY_SCALE_KBPS.items()}
+
+# Sanity ceiling for an explicitly spoken bitrate (kbps).
+QUALITY_MAX_KBPS = 200_000
 
 CATALOG_REINDEX_OPTIONS = {
     "Manual only": 0,

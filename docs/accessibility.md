@@ -113,15 +113,28 @@ unfixable problem — they can hear the stall but have no way to act on it.
 These commands change the cap by voice alone, and work on clients that offer
 no quality control at all (Moonfin, Swiftfin, Findroid):
 
+Quality is a **1–5 scale** in even 2 Mbps steps — level 1 is 2 Mbps, level 3
+is 6 Mbps, level 5 is 10 Mbps. A small numbered scale is easier to hold in
+your head than a list of bitrates, and it gives the user a stable frame of
+reference they never have to see.
+
 | Say | Result |
 |-----|--------|
-| "it keeps buffering" / "lower the quality" | One step down the preset ladder |
-| "set the quality to low" | Jump to a named level |
-| "cap the bitrate at 3 megabits" | Set an explicit bitrate |
+| "quality three" | Jump straight to level 3 |
+| "it keeps buffering" / "lower the quality" | Step down one level |
+| "higher quality" | Step up one level |
+| "set the quality to low" | Use a word instead of a number |
+| "cap the bitrate at 3 megabits" | Set a bitrate off the scale |
 | "remove the quality limit" | Remove the cap |
-| "what's the bitrate?" | Hear the current cap |
+| "what's the quality?" | Hear the current level and bitrate |
 
 Phrasing is matched by rule, so this works with no AI provider configured.
+
+Every reply names the level *and* the bitrate — "Quality set to level 3, 6
+megabits per second" — so the user always knows where they are on the scale
+without asking. At either end, stepping says "that's already the lowest"
+rather than going quiet, which would be indistinguishable from a command that
+was never heard.
 
 Whatever is playing is restarted at the same position, since a stream keeps
 the bitrate it started with. The spoken reply always states what actually
