@@ -104,6 +104,40 @@ Adjust in **Settings → Devices & Services → Voice Jellyfin → Configure**.
 
 ---
 
+## Streaming Quality Without the Client UI
+
+Every Jellyfin client puts its max-bitrate setting behind several menus of
+small text. For a user who cannot navigate that UI, buffering becomes an
+unfixable problem — they can hear the stall but have no way to act on it.
+
+These commands change the cap by voice alone, and work on clients that offer
+no quality control at all (Moonfin, Swiftfin, Findroid):
+
+| Say | Result |
+|-----|--------|
+| "it keeps buffering" / "lower the quality" | One step down the preset ladder |
+| "set the quality to low" | Jump to a named level |
+| "cap the bitrate at 3 megabits" | Set an explicit bitrate |
+| "remove the quality limit" | Remove the cap |
+| "what's the bitrate?" | Hear the current cap |
+
+Phrasing is matched by rule, so this works with no AI provider configured.
+
+Whatever is playing is restarted at the same position, since a stream keeps
+the bitrate it started with. The spoken reply always states what actually
+happened — including when the change was refused because the Jellyfin account
+lacks administrator rights, so the user is never left believing a setting
+changed when it did not.
+
+Note that Jellyfin applies this cap only to clients streaming from outside the
+local network. See the README for details.
+
+For a caregiver setting this up remotely, the same actions are available as
+the `voice_jellyfin.set_quality`, `quality_up` and `quality_down` services,
+which can be put on a dashboard button or an automation.
+
+---
+
 ## Tips for Low-Mobility Users
 
 - **Combine with a voice satellite** (e.g. Wyoming Satellite, ESP32-S3-BOX) near the bed or couch for zero-touch activation.

@@ -328,18 +328,15 @@ class JellyfinClient:
         session_id: str,
         item_id: str,
         start_ticks: int = 0,
-        max_bitrate_kbps: Optional[int] = None,
     ) -> None:
         session = self._get_session()
         url = f"{self._auth.base_url()}/Sessions/{session_id}/Playing"
         params: dict[str, Any] = {"playCommand": "PlayNow", "itemIds": item_id}
         if start_ticks:
             params["startPositionTicks"] = start_ticks
-        if max_bitrate_kbps:
-            params["MaxStreamingBitrate"] = max_bitrate_kbps * 1000
         async with session.post(url, params=params, headers=self._h()) as resp:
             await resp.read()
-        _LOGGER.debug("Play command sent: session=%s item=%s ticks=%d bitrate=%s", session_id, item_id, start_ticks, max_bitrate_kbps)
+        _LOGGER.debug("Play command sent: session=%s item=%s ticks=%d", session_id, item_id, start_ticks)
 
     async def async_pause(self, session_id: str) -> None:
         session = self._get_session()
@@ -366,6 +363,80 @@ class JellyfinClient:
         async with session.post(url, headers=self._h()) as resp:
             await resp.read()
         _LOGGER.debug("Next track sent: session=%s", session_id)
+
+    # ------------------------------------------------------------------
+    # Streaming quality / bitrate cap
+    # ------------------------------------------------------------------
+
+    async def async_send_general_command(
+        self, session_id: str, name: str, arguments: Optional[dict[str, Any]] = None
+    ) -> bool:
+        """Send a Jellyfin GeneralCommand to a session.
+
+        A True result only means the server accepted and forwarded the command;
+        clients silently ignore commands they have not implemented.
+        """
+        session = self._get_session()
+        url = f"{self._auth.base_url()}/Sessions/{session_id}/Command"
+        payload: dict[str, Any] = {"Name": name, "Arguments": arguments or {}}
+        async with session.post(url, json=payload, headers=self._h()) as resp:
+            await resp.read()
+            ok = resp.status < 300
+        _LOGGER.debug("General command %s sent to session=%s ok=%s", name, session_id, ok)
+        return ok
+
+    async def _async_get_user_policy(self, user_id: str) -> dict[str, Any]:
+        """Fetch a user's full UserPolicy object; empty dict when unavailable."""
+        if not user_id:
+            return {}
+        session = self._get_session()
+        url = f"{self._auth.base_url()}/Users/{user_id}"
+        async with session.get(url, headers=self._h()) as resp:
+            if resp.status >= 300:
+                await resp.read()
+                _LOGGER.warning("Could not read user %s (HTTP %s)", user_id, resp.status)
+                return {}
+            data = await resp.json(content_type=None)
+        return (data or {}).get("Policy") or {}
+
+    async def async_get_bitrate_limit(self, user_id: str) -> int:
+        """Return the user's streaming bitrate cap in kbps (0 = uncapped)."""
+        policy = await self._async_get_user_policy(user_id)
+        try:
+            return max(0, int(policy.get("RemoteClientBitrateLimit") or 0) // 1000)
+        except (TypeError, ValueError):
+            return 0
+
+    async def async_set_bitrate_limit(self, user_id: str, kbps: int) -> bool:
+        """Cap the user's streaming bitrate server-side; 0 removes the cap.
+
+        Writes UserPolicy.RemoteClientBitrateLimit, which the server enforces
+        when it builds the playback stream, so this works without the client
+        app exposing a quality setting. Two constraints apply: the configured
+        Jellyfin credentials need administrator rights, and Jellyfin only
+        enforces the cap for clients outside the local network.
+
+        The whole policy object is read and written back because the endpoint
+        replaces it wholesale — a partial body would clear the other fields.
+        """
+        policy = await self._async_get_user_policy(user_id)
+        if not policy:
+            return False
+        policy["RemoteClientBitrateLimit"] = max(0, int(kbps)) * 1000
+        session = self._get_session()
+        url = f"{self._auth.base_url()}/Users/{user_id}/Policy"
+        async with session.post(url, json=policy, headers=self._h()) as resp:
+            await resp.read()
+            status = resp.status
+        if status >= 300:
+            _LOGGER.warning(
+                "Could not set bitrate limit for user %s (HTTP %s) — changing a user "
+                "policy requires Jellyfin administrator rights",
+                user_id, status,
+            )
+            return False
+        _LOGGER.debug("Bitrate limit for user %s set to %d kbps", user_id, kbps)
+        return True
 
     async def async_set_favorite(self, user_id: str, item_id: str, is_favorite: bool = True) -> None:
         """Add or remove an item from the user's favorites."""

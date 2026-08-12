@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -40,6 +41,8 @@ Valid intents and their params:
 - SKIP_INTRO   params: {{}} — skip the intro of the current episode
 - QUALITY_UP   params: {{}} — increase stream quality one step
 - QUALITY_DOWN params: {{}} — lower stream quality one step
+- SET_QUALITY  params: level ("lowest"|"low"|"medium"|"high"|"highest"|"auto") OR bitrate_kbps (int) — set an absolute quality cap; "auto" removes the cap
+- QUALITY_STATUS params: {{}} — report the current quality cap
 - FAVORITE     params: {{}} — add currently playing item to favorites
 - UNFAVORITE   params: {{}} — remove currently playing item from favorites
 - NOW_PLAYING  params: {{}} — ask what is currently playing
@@ -61,6 +64,9 @@ Examples:
 - "open Jellyfin" → OPEN_APP
 - "skip the intro" → SKIP_INTRO
 - "lower the quality" or "it's buffering" → QUALITY_DOWN
+- "set the quality to low" → SET_QUALITY, level="low"
+- "cap the bitrate at 3 megabits" → SET_QUALITY, bitrate_kbps=3000
+- "remove the quality limit" → SET_QUALITY, level="auto"
 - "next episode" → NEXT_EPISODE
 - "add this to my favorites" → FAVORITE
 - "what's playing?" → NOW_PLAYING
@@ -94,6 +100,15 @@ _TV_LABELS = {
 }
 
 
+def _format_bitrate(kbps: int) -> str:
+    """Render a kbps cap as something natural to hear spoken aloud."""
+    if kbps <= 0:
+        return "unlimited"
+    if kbps >= 1000:
+        return f"{kbps / 1000:g} megabits per second"
+    return f"{kbps} kilobits per second"
+
+
 class IntentRouter:
     """Parses a natural language command via AI and dispatches the action."""
 
@@ -116,6 +131,12 @@ class IntentRouter:
         from ..const import BITRATE_PRESETS_KBPS
         self._bitrate_presets = bitrate_presets or BITRATE_PRESETS_KBPS
         self._bitrate_idx = current_bitrate_idx  # -1 = auto (no cap)
+        # Cached cap in kbps (0 = uncapped); refreshed from the server on use.
+        self._bitrate_kbps = (
+            self._bitrate_presets[current_bitrate_idx]
+            if 0 <= current_bitrate_idx < len(self._bitrate_presets)
+            else 0
+        )
         tv_label = _TV_LABELS.get(tv_type)
         tv_clause = f" and {tv_label}" if tv_label else ""
         self._system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(tv_clause=tv_clause)
@@ -193,6 +214,19 @@ class IntentRouter:
             speech_reply=data.get("speech", ""),
         )
 
+    async def async_execute(
+        self,
+        intent: str,
+        params: Optional[dict[str, Any]] = None,
+        context: Optional[AIContext] = None,
+    ) -> IntentResult:
+        """Run an intent directly, skipping the natural-language parsing step.
+
+        Used by the HA services, which already know the intent and its params.
+        """
+        result = IntentResult(intent=intent.upper(), params=params or {})
+        return await self._dispatch(result, context or AIContext())
+
     async def _dispatch(
         self, result: IntentResult, context: AIContext
     ) -> IntentResult:
@@ -222,9 +256,13 @@ class IntentRouter:
             elif intent == "SKIP_INTRO":
                 result = await self._handle_skip_intro(result)
             elif intent == "QUALITY_UP":
-                result = await self._handle_quality(result, direction=1)
+                result = await self._handle_quality_step(result, direction=1)
             elif intent == "QUALITY_DOWN":
-                result = await self._handle_quality(result, direction=-1)
+                result = await self._handle_quality_step(result, direction=-1)
+            elif intent == "SET_QUALITY":
+                result = await self._handle_set_quality(result, params)
+            elif intent == "QUALITY_STATUS":
+                result = await self._handle_quality_status(result)
             elif intent == "FAVORITE":
                 result = await self._handle_favorite(result, add=True)
             elif intent == "UNFAVORITE":
@@ -456,33 +494,128 @@ class IntentRouter:
         result.speech_reply = result.speech_reply or ("Skipped intro." if skipped else "Couldn't find the intro.")
         return result
 
-    async def _handle_quality(self, result: IntentResult, direction: int) -> IntentResult:
-        """Step bitrate up (+1) or down (-1) and restart playback with the new cap."""
+    async def _handle_quality_step(self, result: IntentResult, direction: int) -> IntentResult:
+        """Move the bitrate cap one preset up (+1) or down (-1)."""
         if not self._jellyfin:
             return result
+
+        presets = self._bitrate_presets
+        current = await self._current_bitrate_kbps()
+
+        if current <= 0:
+            # Uncapped. Stepping down starts from the top preset; there is
+            # nothing above uncapped to step up to.
+            if direction > 0:
+                result.speech_reply = result.speech_reply or "Quality is already unlimited."
+                return result
+            target = presets[-1]
+        else:
+            new_idx = self._preset_index(current) + direction
+            # Stepping past the top preset means removing the cap entirely.
+            target = 0 if new_idx >= len(presets) else presets[max(0, new_idx)]
+
+        return await self._apply_quality(result, target)
+
+    async def _handle_set_quality(
+        self, result: IntentResult, params: dict[str, Any]
+    ) -> IntentResult:
+        """Set an absolute cap from a named level or an explicit kbps value."""
+        if not self._jellyfin:
+            return result
+        from ..const import QUALITY_LEVELS_KBPS
+
+        target: Optional[int] = None
+        raw_rate = params.get("bitrate_kbps")
+        if raw_rate is not None:
+            try:
+                target = max(0, int(raw_rate))
+            except (TypeError, ValueError):
+                _LOGGER.debug("Ignoring unparseable bitrate_kbps: %r", raw_rate)
+        if target is None:
+            level = str(params.get("level", "")).strip().lower()
+            if level in QUALITY_LEVELS_KBPS:
+                target = QUALITY_LEVELS_KBPS[level]
+        if target is None:
+            result.speech_reply = result.speech_reply or (
+                "Tell me a level like low, medium or high, or give me a bitrate."
+            )
+            return result
+
+        return await self._apply_quality(result, target)
+
+    async def _handle_quality_status(self, result: IntentResult) -> IntentResult:
+        if not self._jellyfin:
+            return result
+        current = await self._current_bitrate_kbps()
+        if current <= 0:
+            result.speech_reply = result.speech_reply or "Quality is unlimited — there's no bitrate cap set."
+        else:
+            result.speech_reply = result.speech_reply or f"Quality is capped at {_format_bitrate(current)}."
+        return result
+
+    async def _apply_quality(self, result: IntentResult, kbps: int) -> IntentResult:
+        """Cap streaming at *kbps* (0 = uncapped) and restart the current stream."""
+        user_id = self._jellyfin_user_id()
+        if not user_id:
+            result.speech_reply = result.speech_reply or (
+                "I don't know which Jellyfin user to change the quality for."
+            )
+            return result
+        if not await self._jellyfin.async_set_bitrate_limit(user_id, kbps):
+            result.speech_reply = result.speech_reply or (
+                "I couldn't change the quality. The Jellyfin account needs "
+                "administrator rights to set a bitrate limit."
+            )
+            return result
+
+        self._bitrate_kbps = kbps
+        self._bitrate_idx = self._preset_index(kbps) if kbps > 0 else -1
+        label = _format_bitrate(kbps)
+
         sessions = await self._jellyfin.async_get_sessions()
         active = next((s for s in sessions if s.item), None)
         if not active:
-            result.speech_reply = "Nothing is playing."
+            result.speech_reply = result.speech_reply or (
+                f"Quality set to {label}. It'll apply to the next thing you play."
+            )
             return result
 
-        # Move index
-        if self._bitrate_idx < 0:
-            # Currently auto — start from top or bottom depending on direction
-            self._bitrate_idx = len(self._bitrate_presets) - 1 if direction < 0 else 0
-        else:
-            self._bitrate_idx = max(0, min(len(self._bitrate_presets) - 1, self._bitrate_idx + direction))
+        # Best effort: clients implementing SetMaxStreamingBitrate can pick the
+        # new cap up in place. Most, Moonfin included, ignore it — the restart
+        # below is what actually makes the change take hold.
+        try:
+            await self._jellyfin.async_send_general_command(
+                active.id, "SetMaxStreamingBitrate", {"Bitrate": kbps * 1000}
+            )
+        except Exception as exc:
+            _LOGGER.debug("SetMaxStreamingBitrate command failed: %s", exc)
 
-        bitrate = self._bitrate_presets[self._bitrate_idx]
-        item_id = active.item.id  # type: ignore[union-attr]
-        pos = active.position_ticks
-
+        # A stream keeps the bitrate it was opened with, so restart it in place.
         await self._jellyfin.async_stop(active.id)
-        await self._jellyfin.async_play(active.id, item_id, start_ticks=pos, max_bitrate_kbps=bitrate)
-
-        label = f"{bitrate // 1000} Mbps" if bitrate >= 1000 else f"{bitrate} kbps"
+        await self._jellyfin.async_play(
+            active.id, active.item.id, start_ticks=active.position_ticks
+        )
         result.speech_reply = result.speech_reply or f"Quality set to {label}."
         return result
+
+    async def _current_bitrate_kbps(self) -> int:
+        """Current cap in kbps (0 = uncapped), preferring the server's value."""
+        user_id = self._jellyfin_user_id()
+        if user_id:
+            try:
+                self._bitrate_kbps = await self._jellyfin.async_get_bitrate_limit(user_id)
+            except Exception as exc:
+                _LOGGER.debug("Could not read the bitrate limit from Jellyfin: %s", exc)
+        return self._bitrate_kbps
+
+    def _preset_index(self, kbps: int) -> int:
+        """Index of the preset closest to *kbps*."""
+        presets = self._bitrate_presets
+        return min(range(len(presets)), key=lambda i: abs(presets[i] - kbps))
+
+    def _jellyfin_user_id(self) -> str:
+        auth = getattr(self._jellyfin, "_auth", None)
+        return getattr(auth, "user_id", "") or ""
 
     async def _handle_favorite(self, result: IntentResult, add: bool) -> IntentResult:
         if not self._jellyfin:
@@ -561,8 +694,14 @@ class IntentRouter:
     _RESUME_PHRASES = frozenset({"resume", "continue", "unpause", "keep watching", "continue watching", "resume playback", "resume what i was watching"})
     _NEXT_EP_PHRASES = frozenset({"next episode", "next ep", "skip episode", "next"})
     _SKIP_INTRO_PHRASES = frozenset({"skip intro", "skip the intro", "skip opening"})
-    _QUALITY_DOWN_PHRASES = frozenset({"lower quality", "lower the quality", "reduce quality", "worse quality", "buffering", "it's buffering", "lower bitrate"})
+    _QUALITY_DOWN_PHRASES = frozenset({"lower quality", "lower the quality", "reduce quality", "worse quality", "buffering", "it's buffering", "its buffering", "lower bitrate", "keeps buffering", "it keeps buffering", "it's lagging", "its lagging"})
     _QUALITY_UP_PHRASES = frozenset({"higher quality", "better quality", "increase quality", "raise quality", "higher bitrate"})
+    _QUALITY_STATUS_PHRASES = frozenset({
+        "what's the quality", "whats the quality", "what is the quality",
+        "what quality", "current quality", "quality status",
+        "what's the bitrate", "whats the bitrate", "what is the bitrate",
+        "what bitrate", "current bitrate",
+    })
     _FAVORITE_PHRASES = frozenset({"favorite", "add to favorites", "add this to favorites", "mark as favorite"})
     _UNFAVORITE_PHRASES = frozenset({"unfavorite", "remove from favorites", "remove this from favorites"})
     _NOW_PLAYING_PHRASES = frozenset({"what's playing", "whats playing", "what is playing", "now playing", "what's on"})
@@ -579,6 +718,56 @@ class IntentRouter:
         "fast forward": "fast_forward", "rewind": "rewind",
         "volume up": "volume_up", "volume down": "volume_down", "mute": "mute",
     }
+
+    # Free-form quality phrasing, matched when none of the exact phrases hit.
+    _QUALITY_TOPIC_RE = re.compile(r"\b(?:quality|bit\s?rate|bandwidth|data)\b")
+    _BITRATE_VALUE_RE = re.compile(
+        r"(\d+(?:\.\d+)?)\s*(kbps|kilobits?|kb|k|mbps|megabits?|mb|m)\b"
+    )
+    _QUALITY_LEVEL_WORDS = {
+        "lowest": "lowest", "minimum": "lowest", "min": "lowest", "worst": "lowest",
+        "low": "low", "small": "low",
+        "medium": "medium", "med": "medium", "normal": "medium",
+        "standard": "medium", "middle": "medium",
+        "high": "high",
+        "highest": "highest",
+        "auto": "auto", "automatic": "auto", "max": "auto", "maximum": "auto",
+        "unlimited": "auto", "uncapped": "auto", "full": "auto",
+        "original": "auto", "best": "auto", "default": "auto",
+    }
+    _QUALITY_RESET_RE = re.compile(r"\b(?:remove|clear|reset|lift|disable|undo|no)\b")
+    _QUALITY_DOWN_WORDS = frozenset({"down", "lower", "reduce", "decrease", "drop", "worse", "less", "limit", "cap", "save"})
+    _QUALITY_UP_WORDS = frozenset({"up", "raise", "increase", "better", "higher", "more", "improve"})
+
+    def _match_quality_command(self, lower: str) -> Optional[IntentResult]:
+        """Match free-form quality/bitrate phrasing, e.g. 'cap the bitrate at 3 mbps'."""
+        if not self._QUALITY_TOPIC_RE.search(lower):
+            return None
+
+        rate = self._BITRATE_VALUE_RE.search(lower)
+        if rate:
+            value = float(rate.group(1))
+            kbps = int(value * 1000) if rate.group(2).startswith("m") else int(value)
+            return IntentResult(intent="SET_QUALITY", params={"bitrate_kbps": kbps})
+
+        # "remove the quality limit", "no bitrate cap" — checked before the
+        # direction words so the "limit"/"cap" in them doesn't read as "lower".
+        if self._QUALITY_RESET_RE.search(lower):
+            return IntentResult(intent="SET_QUALITY", params={"level": "auto"})
+
+        words = re.findall(r"[a-z]+", lower)
+        for word in words:
+            if word in self._QUALITY_LEVEL_WORDS:
+                return IntentResult(
+                    intent="SET_QUALITY",
+                    params={"level": self._QUALITY_LEVEL_WORDS[word]},
+                )
+        for word in words:
+            if word in self._QUALITY_DOWN_WORDS:
+                return IntentResult(intent="QUALITY_DOWN")
+            if word in self._QUALITY_UP_WORDS:
+                return IntentResult(intent="QUALITY_UP")
+        return None
 
     def _rule_based_intent(self, text: str) -> IntentResult:
         """Map a voice command to an intent without an AI provider."""
@@ -598,6 +787,8 @@ class IntentRouter:
             return IntentResult(intent="QUALITY_DOWN")
         if lower in self._QUALITY_UP_PHRASES:
             return IntentResult(intent="QUALITY_UP")
+        if lower in self._QUALITY_STATUS_PHRASES:
+            return IntentResult(intent="QUALITY_STATUS")
         if lower in self._FAVORITE_PHRASES:
             return IntentResult(intent="FAVORITE")
         if lower in self._UNFAVORITE_PHRASES:
@@ -614,4 +805,9 @@ class IntentRouter:
         for prefix in self._SEARCH_PREFIXES:
             if lower.startswith(prefix):
                 return IntentResult(intent="SEARCH", params={"query": stripped[len(prefix):].strip()})
+        # Checked after the play/search prefixes so a title containing "quality"
+        # is still treated as something to play rather than a settings change.
+        quality = self._match_quality_command(lower)
+        if quality is not None:
+            return quality
         return IntentResult(intent="SEARCH", params={"query": stripped})

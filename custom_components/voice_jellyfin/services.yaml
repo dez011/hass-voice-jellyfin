@@ -142,3 +142,47 @@ go_back:
   name: Go Back
   description: Press the Back button on the Android TV.
   fields: {}
+
+quality_up:
+  name: Quality Up
+  description: Raise the streaming bitrate cap one step and restart the current stream.
+  fields: {}
+
+quality_down:
+  name: Quality Down
+  description: Lower the streaming bitrate cap one step and restart the current stream.
+  fields: {}
+
+set_quality:
+  name: Set Quality
+  description: >-
+    Set an absolute streaming bitrate cap for the Jellyfin user. Give either a
+    named level or an explicit bitrate. Requires the configured Jellyfin
+    account to have administrator rights.
+  fields:
+    level:
+      name: Level
+      description: Named quality level. "auto" removes the cap entirely.
+      required: false
+      example: low
+      selector:
+        select:
+          options:
+            - auto
+            - lowest
+            - low
+            - medium
+            - high
+            - highest
+    bitrate_kbps:
+      name: Bitrate (kbps)
+      description: Explicit cap in kilobits per second. 0 removes the cap. Takes precedence over Level.
+      required: false
+      example: 4000
+      selector:
+        number:
+          min: 0
+          max: 200000
+          step: 100
+          unit_of_measurement: kbps
+          mode: box

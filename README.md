@@ -78,6 +78,45 @@ All services are available under the `voice_jellyfin` domain:
 | `voice_jellyfin.go_home` | Press Home | — |
 | `voice_jellyfin.go_back` | Press Back | — |
 | `voice_jellyfin.reindex_catalog` | Rebuild the local media search index | — |
+| `voice_jellyfin.quality_up` | Raise the streaming bitrate cap one step | — |
+| `voice_jellyfin.quality_down` | Lower the streaming bitrate cap one step | — |
+| `voice_jellyfin.set_quality` | Set an absolute bitrate cap | `level`, `bitrate_kbps` |
+
+---
+
+## Streaming Quality by Voice
+
+Most Jellyfin clients bury the max-bitrate setting several menus deep, which
+makes it unreachable for anyone who can't navigate the client UI. These
+commands change it without touching the client:
+
+| Say | Result |
+|-----|--------|
+| "lower the quality", "it keeps buffering" | Drop one step down the preset ladder |
+| "higher quality" | Move one step up; past the top preset the cap is removed |
+| "set the quality to low" | Jump straight to a named level |
+| "cap the bitrate at 3 megabits" | Set an explicit bitrate |
+| "remove the quality limit" | Remove the cap entirely |
+| "what's the bitrate?" | Report the current cap |
+
+Named levels are `lowest` (500 kbps), `low` (1 Mbps), `medium` (4 Mbps),
+`high` (8 Mbps), `highest` (20 Mbps) and `auto` (no cap).
+
+The cap is applied server-side, by setting `RemoteClientBitrateLimit` on the
+Jellyfin user's policy, so it works with clients that expose no quality
+control of their own — Moonfin, Swiftfin, Findroid and the rest. Anything
+already playing is stopped and restarted at the same position, because a
+stream keeps whatever bitrate it was opened with.
+
+Two constraints come from Jellyfin itself:
+
+- **The configured Jellyfin account needs administrator rights.** Changing a
+  user policy is an admin operation; without it the integration says so out
+  loud rather than silently doing nothing.
+- **Jellyfin only enforces this cap for clients outside the local network.**
+  It is the "internet streaming bitrate limit", and playback from inside the
+  LAN is deliberately exempt. For a viewer streaming over the internet — the
+  case where buffering actually happens — it applies.
 
 ---
 

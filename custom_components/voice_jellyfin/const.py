@@ -120,6 +120,18 @@ DEFAULT_SKIP_BACK_SECONDS = 10
 
 BITRATE_PRESETS_KBPS = [500, 1000, 2000, 4000, 8000, 20000, 40000]  # kbps steps for quality up/down
 
+# Named quality levels usable by voice ("set the quality to low").
+# 0 means "no cap" — the server stops limiting and the client picks.
+QUALITY_AUTO = "auto"
+QUALITY_LEVELS_KBPS = {
+    QUALITY_AUTO: 0,
+    "lowest": 500,
+    "low": 1000,
+    "medium": 4000,
+    "high": 8000,
+    "highest": 20000,
+}
+
 CATALOG_REINDEX_OPTIONS = {
     "Manual only": 0,
     "Every 6 hours": 6,
@@ -147,6 +159,7 @@ SERVICE_NEXT_EPISODE = "next_episode"
 SERVICE_SKIP_INTRO = "skip_intro"
 SERVICE_QUALITY_UP = "quality_up"
 SERVICE_QUALITY_DOWN = "quality_down"
+SERVICE_SET_QUALITY = "set_quality"
 SERVICE_FAVORITE = "favorite"
 SERVICE_UNFAVORITE = "unfavorite"
 SERVICE_NOW_PLAYING = "now_playing"

@@ -168,9 +168,37 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         from .ai.providers import build_provider
         self.ai_provider = await build_provider(self.hass, config)
 
+    def _build_router(self, config: Optional[dict[str, Any]] = None) -> Any:
+        """Construct an IntentRouter carrying the current runtime state."""
+        from .ai.intent_router import IntentRouter
+
+        merged = config if config is not None else {**self.entry.data, **(self.entry.options or {})}
+        return IntentRouter(
+            jellyfin=self.jellyfin_client,
+            tv=self.tv_controller,
+            nav=self.navigation_mode,
+            hass=self.hass,
+            tv_type=self.entry.data.get(CONF_TV_TYPE, ""),
+            preferred_client_package=merged.get(
+                CONF_PREFERRED_CLIENT_PACKAGE, DEFAULT_PREFERRED_CLIENT_PACKAGE
+            ),
+            bitrate_presets=BITRATE_PRESETS_KBPS,
+            current_bitrate_idx=self._bitrate_idx,
+        )
+
+    async def async_run_intent(self, intent: str, params: Optional[dict[str, Any]] = None) -> str:
+        """Execute an intent directly, bypassing AI parsing. Returns the spoken reply."""
+        router = self._build_router()
+        result = await router.async_execute(intent, params)
+        self._bitrate_idx = router._bitrate_idx
+        try:
+            self.async_set_updated_data(await self._async_update_data())
+        except Exception:
+            _LOGGER.debug("Post-intent status refresh failed", exc_info=True)
+        return result.speech_reply or "Done."
+
     async def async_send_command(self, text: str, suppress_error_speech: bool = False) -> str:
         """Route a natural language command through AI and execute it."""
-        from .ai.intent_router import IntentRouter
         self._last_command = text
         merged_config = {**self.entry.data, **(self.entry.options or {})}
         ai_enabled = merged_config.get(CONF_AI_ENABLED, False)
@@ -184,17 +212,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await self.navigation_mode.async_toggle_hot_mic()
                 state = "activated" if self.navigation_mode.hot_mic_active else "deactivated"
                 return f"Hot mic {state}."
-        preferred_pkg = merged_config.get(CONF_PREFERRED_CLIENT_PACKAGE, DEFAULT_PREFERRED_CLIENT_PACKAGE)
-        router = IntentRouter(
-            jellyfin=self.jellyfin_client,
-            tv=self.tv_controller,
-            nav=self.navigation_mode,
-            hass=self.hass,
-            tv_type=self.entry.data.get(CONF_TV_TYPE, ""),
-            preferred_client_package=preferred_pkg,
-            bitrate_presets=BITRATE_PRESETS_KBPS,
-            current_bitrate_idx=self._bitrate_idx,
-        )
+        router = self._build_router(merged_config)
         result = await router.async_route(text, self.ai_provider, self.ai_context, ai_enabled=ai_enabled)
         if result.media_title:
             self._last_media = result.media_title

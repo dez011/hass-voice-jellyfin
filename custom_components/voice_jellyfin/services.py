@@ -24,6 +24,10 @@ from .const import (
     SERVICE_GO_HOME,
     SERVICE_GO_BACK,
     SERVICE_REINDEX_CATALOG,
+    SERVICE_QUALITY_UP,
+    SERVICE_QUALITY_DOWN,
+    SERVICE_SET_QUALITY,
+    QUALITY_LEVELS_KBPS,
     KEY_HOME,
     KEY_BACK,
     KEY_SELECT,
@@ -62,6 +66,11 @@ _NAVIGATE_SCHEMA = vol.Schema({
 _SCROLL_SCHEMA = vol.Schema({
     vol.Required("direction"): vol.In(["up", "down"]),
     vol.Optional("amount", default=1): vol.All(int, vol.Range(min=1, max=20)),
+})
+
+_SET_QUALITY_SCHEMA = vol.Schema({
+    vol.Optional("level"): vol.In(sorted(QUALITY_LEVELS_KBPS)),
+    vol.Optional("bitrate_kbps"): vol.All(int, vol.Range(min=0, max=200000)),
 })
 
 _EMPTY_SCHEMA = vol.Schema({})
@@ -190,6 +199,26 @@ def async_register_services(hass: HomeAssistant) -> None:
         for coordinator in _get_coordinators():
             await coordinator.async_reindex_catalog()
 
+    async def handle_quality_up(call: ServiceCall) -> None:
+        for coordinator in _get_coordinators():
+            await coordinator.async_run_intent("QUALITY_UP")
+
+    async def handle_quality_down(call: ServiceCall) -> None:
+        for coordinator in _get_coordinators():
+            await coordinator.async_run_intent("QUALITY_DOWN")
+
+    async def handle_set_quality(call: ServiceCall) -> None:
+        params: dict[str, Any] = {}
+        if "bitrate_kbps" in call.data:
+            params["bitrate_kbps"] = call.data["bitrate_kbps"]
+        elif "level" in call.data:
+            params["level"] = call.data["level"]
+        else:
+            _LOGGER.warning("set_quality needs either 'level' or 'bitrate_kbps'")
+            return
+        for coordinator in _get_coordinators():
+            await coordinator.async_run_intent("SET_QUALITY", params)
+
     # ------------------------------------------------------------------
     # Registration
     # ------------------------------------------------------------------
@@ -209,6 +238,9 @@ def async_register_services(hass: HomeAssistant) -> None:
         (SERVICE_GO_HOME, handle_go_home, _EMPTY_SCHEMA),
         (SERVICE_GO_BACK, handle_go_back, _EMPTY_SCHEMA),
         (SERVICE_REINDEX_CATALOG, handle_reindex_catalog, _EMPTY_SCHEMA),
+        (SERVICE_QUALITY_UP, handle_quality_up, _EMPTY_SCHEMA),
+        (SERVICE_QUALITY_DOWN, handle_quality_down, _EMPTY_SCHEMA),
+        (SERVICE_SET_QUALITY, handle_set_quality, _SET_QUALITY_SCHEMA),
     ]
 
     for svc_name, handler, schema in _register:

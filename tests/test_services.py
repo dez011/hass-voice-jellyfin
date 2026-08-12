@@ -11,6 +11,7 @@ from custom_components.voice_jellyfin.const import DOMAIN
 def _make_mock_coordinator():
     coord = MagicMock()
     coord.async_send_command = AsyncMock(return_value="Done.")
+    coord.async_run_intent = AsyncMock(return_value="Done.")
     coord.jellyfin_client = MagicMock()
     coord.jellyfin_client.async_get_sessions = AsyncMock(return_value=[])
     coord.jellyfin_client.async_pause = AsyncMock()
@@ -66,6 +67,7 @@ async def test_all_services_registered(hass_with_services):
         "navigation_mode_on", "navigation_mode_off",
         "repeat_last_action", "go_home", "go_back",
         "reindex_catalog",
+        "quality_up", "quality_down", "set_quality",
     }
     registered_names = {svc for domain, svc in registered.keys() if domain == DOMAIN}
     assert registered_names == expected
@@ -166,3 +168,43 @@ async def test_services_not_re_registered(coordinator):
     async_register_services(hass)
     # Second call: has_service now returns True → no new registrations
     assert hass.services.async_register.call_count == first_count
+
+
+@pytest.mark.asyncio
+async def test_service_quality_down_runs_intent(hass_with_services):
+    hass, coordinator, registered = hass_with_services
+    handler = registered[(DOMAIN, "quality_down")]
+    call_obj = MagicMock()
+    call_obj.data = {}
+    await handler(call_obj)
+    coordinator.async_run_intent.assert_awaited_once_with("QUALITY_DOWN")
+
+
+@pytest.mark.asyncio
+async def test_service_set_quality_passes_level(hass_with_services):
+    hass, coordinator, registered = hass_with_services
+    handler = registered[(DOMAIN, "set_quality")]
+    call_obj = MagicMock()
+    call_obj.data = {"level": "low"}
+    await handler(call_obj)
+    coordinator.async_run_intent.assert_awaited_once_with("SET_QUALITY", {"level": "low"})
+
+
+@pytest.mark.asyncio
+async def test_service_set_quality_prefers_explicit_bitrate(hass_with_services):
+    hass, coordinator, registered = hass_with_services
+    handler = registered[(DOMAIN, "set_quality")]
+    call_obj = MagicMock()
+    call_obj.data = {"level": "low", "bitrate_kbps": 3000}
+    await handler(call_obj)
+    coordinator.async_run_intent.assert_awaited_once_with("SET_QUALITY", {"bitrate_kbps": 3000})
+
+
+@pytest.mark.asyncio
+async def test_service_set_quality_without_args_does_nothing(hass_with_services):
+    hass, coordinator, registered = hass_with_services
+    handler = registered[(DOMAIN, "set_quality")]
+    call_obj = MagicMock()
+    call_obj.data = {}
+    await handler(call_obj)
+    coordinator.async_run_intent.assert_not_awaited()

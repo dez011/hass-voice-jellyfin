@@ -88,52 +88,180 @@ async def test_skip_intro_called():
 # QUALITY_DOWN / QUALITY_UP
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_quality_down_stops_and_replays_with_lower_bitrate():
-    session = _playing_session(position=5_000_000)
-    jellyfin = MagicMock()
-    jellyfin.async_get_sessions = AsyncMock(return_value=[session])
-    jellyfin.async_stop = AsyncMock()
-    jellyfin.async_play = AsyncMock()
+_PRESETS = [500, 2000, 8000]
 
-    presets = [500, 2000, 8000]
-    router = _make_router(jellyfin=jellyfin, bitrate_presets=presets, current_bitrate_idx=-1)
-    result = await router.async_route("lower quality", provider=None, context=AIContext(), ai_enabled=False)
+
+def _quality_jellyfin(session=None, current_kbps=0, set_ok=True):
+    """Jellyfin double wired for the bitrate-cap path."""
+    jf = MagicMock()
+    jf._auth = MagicMock()
+    jf._auth.user_id = "user-001"
+    jf.async_get_sessions = AsyncMock(return_value=[session] if session else [])
+    jf.async_get_bitrate_limit = AsyncMock(return_value=current_kbps)
+    jf.async_set_bitrate_limit = AsyncMock(return_value=set_ok)
+    jf.async_send_general_command = AsyncMock(return_value=True)
+    jf.async_stop = AsyncMock()
+    jf.async_play = AsyncMock()
+    return jf
+
+
+async def _route(jellyfin, text, presets=None):
+    router = _make_router(jellyfin=jellyfin, bitrate_presets=presets or _PRESETS)
+    return await router.async_route(text, provider=None, context=AIContext(), ai_enabled=False)
+
+
+@pytest.mark.asyncio
+async def test_quality_down_from_uncapped_caps_at_top_preset():
+    session = _playing_session(position=5_000_000)
+    jellyfin = _quality_jellyfin(session, current_kbps=0)
+
+    result = await _route(jellyfin, "lower quality")
 
     assert result.intent == "QUALITY_DOWN"
-    jellyfin.async_stop.assert_called_once()
-    jellyfin.async_play.assert_called_once_with("sess-001", "item-001", start_ticks=5_000_000, max_bitrate_kbps=8000)
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 8000)
+    # The running stream keeps its original bitrate, so it is restarted in place.
+    jellyfin.async_stop.assert_awaited_once_with("sess-001")
+    jellyfin.async_play.assert_awaited_once_with("sess-001", "item-001", start_ticks=5_000_000)
 
 
 @pytest.mark.asyncio
-async def test_quality_up_steps_up():
+async def test_quality_down_steps_to_next_lower_preset():
     session = _playing_session(position=1_000_000)
-    jellyfin = MagicMock()
-    jellyfin.async_get_sessions = AsyncMock(return_value=[session])
-    jellyfin.async_stop = AsyncMock()
-    jellyfin.async_play = AsyncMock()
+    jellyfin = _quality_jellyfin(session, current_kbps=2000)
 
-    presets = [500, 2000, 8000]
-    router = _make_router(jellyfin=jellyfin, bitrate_presets=presets, current_bitrate_idx=0)
-    await router.async_route("higher quality", provider=None, context=AIContext(), ai_enabled=False)
+    await _route(jellyfin, "lower quality")
 
-    jellyfin.async_play.assert_called_once_with("sess-001", "item-001", start_ticks=1_000_000, max_bitrate_kbps=2000)
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 500)
 
 
 @pytest.mark.asyncio
 async def test_quality_down_clamps_at_minimum():
     session = _playing_session()
-    jellyfin = MagicMock()
-    jellyfin.async_get_sessions = AsyncMock(return_value=[session])
-    jellyfin.async_stop = AsyncMock()
-    jellyfin.async_play = AsyncMock()
+    jellyfin = _quality_jellyfin(session, current_kbps=500)
 
-    presets = [500, 2000]
-    router = _make_router(jellyfin=jellyfin, bitrate_presets=presets, current_bitrate_idx=0)
-    await router.async_route("lower quality", provider=None, context=AIContext(), ai_enabled=False)
+    await _route(jellyfin, "lower quality")
 
-    # idx was 0, step down clamps to 0 → still 500
-    jellyfin.async_play.assert_called_once_with("sess-001", "item-001", start_ticks=0, max_bitrate_kbps=500)
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 500)
+
+
+@pytest.mark.asyncio
+async def test_quality_up_steps_to_next_higher_preset():
+    session = _playing_session()
+    jellyfin = _quality_jellyfin(session, current_kbps=500)
+
+    await _route(jellyfin, "higher quality")
+
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 2000)
+
+
+@pytest.mark.asyncio
+async def test_quality_up_past_top_preset_removes_the_cap():
+    session = _playing_session()
+    jellyfin = _quality_jellyfin(session, current_kbps=8000)
+
+    await _route(jellyfin, "higher quality")
+
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 0)
+
+
+@pytest.mark.asyncio
+async def test_quality_up_when_already_uncapped_does_nothing():
+    session = _playing_session()
+    jellyfin = _quality_jellyfin(session, current_kbps=0)
+
+    result = await _route(jellyfin, "higher quality")
+
+    jellyfin.async_set_bitrate_limit.assert_not_awaited()
+    assert "unlimited" in result.speech_reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_set_quality_named_level():
+    session = _playing_session()
+    jellyfin = _quality_jellyfin(session, current_kbps=0)
+
+    result = await _route(jellyfin, "set the quality to low")
+
+    assert result.intent == "SET_QUALITY"
+    # "low" resolves through QUALITY_LEVELS_KBPS, not the preset ladder.
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 1000)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "phrase,expected_kbps",
+    [
+        ("cap the bitrate at 3 mbps", 3000),
+        ("set the bitrate to 1500 kbps", 1500),
+        ("limit the quality to 2 megabits", 2000),
+    ],
+)
+async def test_set_quality_explicit_bitrate(phrase, expected_kbps):
+    session = _playing_session()
+    jellyfin = _quality_jellyfin(session, current_kbps=0)
+
+    await _route(jellyfin, phrase)
+
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", expected_kbps)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "phrase", ["remove the quality limit", "reset the quality", "set quality to auto"]
+)
+async def test_set_quality_auto_removes_the_cap(phrase):
+    session = _playing_session()
+    jellyfin = _quality_jellyfin(session, current_kbps=2000)
+
+    await _route(jellyfin, phrase)
+
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 0)
+
+
+@pytest.mark.asyncio
+async def test_set_quality_with_nothing_playing_still_applies():
+    jellyfin = _quality_jellyfin(session=None, current_kbps=0)
+
+    result = await _route(jellyfin, "set the quality to low")
+
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 1000)
+    jellyfin.async_play.assert_not_awaited()
+    assert "next thing you play" in result.speech_reply
+
+
+@pytest.mark.asyncio
+async def test_set_quality_without_admin_rights_explains_why():
+    session = _playing_session()
+    jellyfin = _quality_jellyfin(session, current_kbps=0, set_ok=False)
+
+    result = await _route(jellyfin, "set the quality to low")
+
+    # Nothing is restarted when the cap could not be written.
+    jellyfin.async_stop.assert_not_awaited()
+    jellyfin.async_play.assert_not_awaited()
+    assert "administrator" in result.speech_reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_quality_status_reports_the_current_cap():
+    jellyfin = _quality_jellyfin(session=None, current_kbps=4000)
+
+    result = await _route(jellyfin, "what's the bitrate")
+
+    assert result.intent == "QUALITY_STATUS"
+    assert "4 megabits" in result.speech_reply
+    jellyfin.async_set_bitrate_limit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_buffering_complaint_lowers_quality():
+    session = _playing_session()
+    jellyfin = _quality_jellyfin(session, current_kbps=8000)
+
+    result = await _route(jellyfin, "it keeps buffering")
+
+    assert result.intent == "QUALITY_DOWN"
+    jellyfin.async_set_bitrate_limit.assert_awaited_once_with("user-001", 2000)
 
 
 # ---------------------------------------------------------------------------
@@ -413,14 +541,56 @@ async def test_async_get_series_play_target_with_season():
 
 
 @pytest.mark.asyncio
-async def test_async_play_sends_bitrate_param():
+async def test_async_set_bitrate_limit_writes_user_policy():
+    # GET /Users/{id} returns the policy, POST /Users/{id}/Policy writes it back.
+    resp = _mock_response({"Id": "user-001", "Policy": {"IsAdministrator": True, "RemoteClientBitrateLimit": 0}})
+    session = _mock_session(resp)
+    with patch("aiohttp.ClientSession", return_value=session):
+        client = JellyfinClient(_make_auth())
+        ok = await client.async_set_bitrate_limit("user-001", 4000)
+
+    assert ok is True
+    url = session.post.call_args[0][0]
+    assert url.endswith("/Users/user-001/Policy")
+    body = session.post.call_args[1].get("json", {})
+    # Stored in bits per second, and the rest of the policy survives the write.
+    assert body["RemoteClientBitrateLimit"] == 4_000_000
+    assert body["IsAdministrator"] is True
+
+
+@pytest.mark.asyncio
+async def test_async_set_bitrate_limit_reports_permission_failure():
+    get_resp = _mock_response({"Id": "user-001", "Policy": {"RemoteClientBitrateLimit": 0}})
+    post_resp = _mock_response({}, status=403)
+    session = _mock_session(get_resp)
+    session.post = MagicMock(return_value=post_resp)
+    with patch("aiohttp.ClientSession", return_value=session):
+        client = JellyfinClient(_make_auth())
+        ok = await client.async_set_bitrate_limit("user-001", 4000)
+
+    assert session.post.called
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_async_get_bitrate_limit_returns_kbps():
+    resp = _mock_response({"Id": "user-001", "Policy": {"RemoteClientBitrateLimit": 8_000_000}})
+    session = _mock_session(resp)
+    with patch("aiohttp.ClientSession", return_value=session):
+        client = JellyfinClient(_make_auth())
+        assert await client.async_get_bitrate_limit("user-001") == 8000
+
+
+@pytest.mark.asyncio
+async def test_async_play_does_not_send_bitrate_param():
+    # Jellyfin's PlayRequest has no bitrate field; the cap lives on the user policy.
     resp = _mock_response({})
     session = _mock_session(resp)
     with patch("aiohttp.ClientSession", return_value=session):
         client = JellyfinClient(_make_auth())
-        await client.async_play("sess-001", "item-001", max_bitrate_kbps=4000)
+        await client.async_play("sess-001", "item-001")
     params = session.post.call_args[1].get("params", {})
-    assert params.get("MaxStreamingBitrate") == 4_000_000
+    assert "MaxStreamingBitrate" not in params
 
 
 @pytest.mark.asyncio
@@ -461,3 +631,46 @@ async def test_async_skip_intro_seeks_to_next_chapter():
     # Should have seeked to chapter 1 start (60s)
     seek_params = http_session.post.call_args[1].get("params", {})
     assert seek_params.get("seekPositionTicks") == 60_000_000
+
+
+# ---------------------------------------------------------------------------
+# Rule-based quality phrase matching (no AI provider)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "phrase,intent,params",
+    [
+        ("lower the quality", "QUALITY_DOWN", {}),
+        ("turn the quality down", "QUALITY_DOWN", {}),
+        ("it keeps buffering", "QUALITY_DOWN", {}),
+        ("raise the quality", "QUALITY_UP", {}),
+        ("set the quality to low", "SET_QUALITY", {"level": "low"}),
+        ("make it lowest quality", "SET_QUALITY", {"level": "lowest"}),
+        ("set quality to medium", "SET_QUALITY", {"level": "medium"}),
+        ("cap the bitrate at 3 mbps", "SET_QUALITY", {"bitrate_kbps": 3000}),
+        ("set the bitrate to 1500 kbps", "SET_QUALITY", {"bitrate_kbps": 1500}),
+        ("remove the quality limit", "SET_QUALITY", {"level": "auto"}),
+        ("reset the quality", "SET_QUALITY", {"level": "auto"}),
+        ("what is the bitrate", "QUALITY_STATUS", {}),
+    ],
+)
+def test_quality_phrases_route_without_ai(phrase, intent, params):
+    router = _make_router()
+    result = router._rule_based_intent(phrase)
+    assert result.intent == intent
+    assert result.params == params
+
+
+@pytest.mark.parametrize(
+    "phrase,intent",
+    [
+        ("play breaking bad", "PLAY"),
+        # A title containing a quality word must still be treated as media.
+        ("play High Quality", "PLAY"),
+        ("search for high quality documentaries", "SEARCH"),
+        ("pause", "PAUSE"),
+    ],
+)
+def test_quality_matching_does_not_swallow_media_commands(phrase, intent):
+    router = _make_router()
+    assert router._rule_based_intent(phrase).intent == intent
