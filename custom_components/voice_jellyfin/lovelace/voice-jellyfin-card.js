@@ -12,6 +12,7 @@
  *   device_entity: sensor.voice_jellyfin_current_device
  *   command_entity: sensor.voice_jellyfin_last_command
  *   media_entity: sensor.voice_jellyfin_last_media
+ *   now_playing_entity: sensor.voice_jellyfin_now_playing
  *   nav_switch: switch.voice_jellyfin_navigation_mode
  */
 
@@ -38,6 +39,7 @@ class VoiceJellyfinCard extends HTMLElement {
       device_entity: "sensor.voice_jellyfin_current_device",
       command_entity: "sensor.voice_jellyfin_last_command",
       media_entity: "sensor.voice_jellyfin_last_media",
+      now_playing_entity: "sensor.voice_jellyfin_now_playing",
       nav_switch: "switch.voice_jellyfin_navigation_mode",
       ...config,
     };
@@ -78,6 +80,20 @@ class VoiceJellyfinCard extends HTMLElement {
     const provider = this._stateVal(this._config.provider_entity) || "None";
     const device = this._stateVal(this._config.device_entity) || "None";
     const lastMedia = this._stateVal(this._config.media_entity) || "—";
+
+    // Live now-playing state — shows WHICH client/device is actually
+    // playing, not just the last thing a voice command started.
+    const nowPlayingState = this._config.now_playing_entity
+      ? this._hass.states[this._config.now_playing_entity]
+      : null;
+    const nowPlayingTitle =
+      nowPlayingState && nowPlayingState.state && nowPlayingState.state !== "unavailable" && nowPlayingState.state !== "unknown"
+        ? nowPlayingState.state
+        : lastMedia;
+    const npAttrs = (nowPlayingState && nowPlayingState.attributes) || {};
+    const nowPlayingSubtitle = [npAttrs.client, npAttrs.device]
+      .filter((v) => v && v !== "Unknown")
+      .join(" · ");
     const navSwitch = this._config.nav_switch
       ? this._hass.states[this._config.nav_switch]
       : null;
@@ -156,6 +172,16 @@ class VoiceJellyfinCard extends HTMLElement {
         text-overflow: ellipsis;
         white-space: nowrap;
         text-align: right;
+      }
+      .now-playing-subtitle {
+        font-size: 11px;
+        color: var(--secondary-text-color);
+        max-width: 70%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        text-align: right;
+        margin-left: auto;
       }
       .divider {
         height: 1px;
@@ -242,8 +268,14 @@ class VoiceJellyfinCard extends HTMLElement {
           </div>
           <div class="row">
             <span class="label">Now Playing</span>
-            <span class="value" title="${esc(lastMedia)}">${esc(lastMedia)}</span>
+            <span class="value" title="${esc(nowPlayingTitle)}">${esc(nowPlayingTitle)}</span>
           </div>
+          ${nowPlayingSubtitle ? `
+          <div class="row">
+            <span class="label"></span>
+            <span class="now-playing-subtitle" title="${esc(nowPlayingSubtitle)}">${esc(nowPlayingSubtitle)}</span>
+          </div>
+          ` : ""}
         </div>
 
         <div class="divider"></div>

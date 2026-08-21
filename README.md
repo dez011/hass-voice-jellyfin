@@ -16,6 +16,7 @@ Say natural language commands to search, play, resume, and navigate your media �
 - **Navigation Mode** — Say the keyword once, then drive the TV hands-free: "up", "right five times", "select", "too far", until "exit navigation mode"
 - **Ask-when-ambiguous** — "play batman" with several matches asks "Which one?" and takes "the second one"
 - **Works without AI** — rule-based parsing covers everything; if a configured AI backend is unreachable it degrades gracefully instead of failing
+- **Multiple TVs / Multiple People** — add one entry per TV, each with its own Jellyfin user and an optional device-name filter, so "pause" on one TV never touches another's session
 - **Physical Accessibility Button** — Assign any HA entity to activate Navigation Mode with a single press
 - **Multiple AI Backends** — Ollama (local/private), OpenAI, Anthropic, Google Gemini, OpenRouter, or HA Conversation
 - **Android TV / ADB Control** — Send key events, launch apps, deep-link to specific Jellyfin items
@@ -115,6 +116,7 @@ D-pad control; "exit navigation mode" leaves it.
 | `sensor.voice_jellyfin_current_device` | Sensor | Linked TV entity ID |
 | `sensor.voice_jellyfin_last_command` | Sensor | Most recent voice command |
 | `sensor.voice_jellyfin_last_media` | Sensor | Most recently played title |
+| `sensor.voice_jellyfin_now_playing` | Sensor | What's actually playing right now — title, with client app / device / user / paused as attributes. One per config entry, so each TV shows only its own session |
 | `switch.voice_jellyfin_navigation_mode` | Switch | Toggle Navigation Mode |
 | `select.voice_jellyfin_ai_provider` | Select | Switch AI provider at runtime |
 

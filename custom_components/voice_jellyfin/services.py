@@ -8,6 +8,8 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 
+from .jellyfin.session_select import pick_session
+
 from .const import (
     DOMAIN,
     SERVICE_VOICE_COMMAND,
@@ -124,7 +126,9 @@ def async_register_services(hass: HomeAssistant) -> None:
         for coordinator in _get_coordinators():
             if coordinator.jellyfin_client:
                 uid = user_id or coordinator.jellyfin_client._auth.user_id or ""
-                await coordinator.jellyfin_client.async_resume(uid)
+                await coordinator.jellyfin_client.async_resume(
+                    uid, device_filter=getattr(coordinator, "_target_device", None)
+                )
 
     async def handle_pause(call: ServiceCall) -> None:
         session_id = call.data.get("session_id")
@@ -132,11 +136,11 @@ def async_register_services(hass: HomeAssistant) -> None:
             client = coordinator.jellyfin_client
             if client:
                 # Resolve per coordinator — a session id discovered on one
-                # server must not leak to the next coordinator's server.
+                # server (or TV) must not leak to another coordinator's.
                 sid = session_id
                 if not sid:
                     sessions = await client.async_get_sessions()
-                    active = next((s for s in sessions if s.item), None)
+                    active = pick_session(sessions, device_filter=getattr(coordinator, "_target_device", None))
                     sid = active.id if active else None
                 if sid:
                     await client.async_pause(sid)
@@ -149,7 +153,7 @@ def async_register_services(hass: HomeAssistant) -> None:
                 sid = session_id
                 if not sid:
                     sessions = await client.async_get_sessions()
-                    active = next((s for s in sessions if s.item), None)
+                    active = pick_session(sessions, device_filter=getattr(coordinator, "_target_device", None))
                     sid = active.id if active else None
                 if sid:
                     await client.async_stop(sid)

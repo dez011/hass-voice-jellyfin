@@ -389,3 +389,98 @@ async def test_series_play_target_without_user_still_finds_first_episode(auth):
     assert target == ("ep-1", 0)
     for c in session.get.call_args_list:
         assert "/Users//" not in c[0][0]
+
+
+# ---------------------------------------------------------------------------
+# Multi-device/user targeting
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_async_get_users(auth):
+    payload = [
+        {"Id": "u1", "Name": "Miguel"},
+        {"Id": "u2", "Name": "Brother"},
+    ]
+    resp = _mock_response(payload)
+    with patch("aiohttp.ClientSession", return_value=_mock_session(resp)):
+        client = JellyfinClient(auth)
+        users = await client.async_get_users()
+    assert users == [{"id": "u1", "name": "Miguel"}, {"id": "u2", "name": "Brother"}]
+
+
+@pytest.mark.asyncio
+async def test_async_get_users_skips_entries_without_id(auth):
+    payload = [{"Name": "No ID"}, {"Id": "u1", "Name": "Has ID"}]
+    resp = _mock_response(payload)
+    with patch("aiohttp.ClientSession", return_value=_mock_session(resp)):
+        client = JellyfinClient(auth)
+        users = await client.async_get_users()
+    assert users == [{"id": "u1", "name": "Has ID"}]
+
+
+@pytest.mark.asyncio
+async def test_async_resume_prefers_device_filter_within_user_pool(auth):
+    """Two sessions both belong to the requesting user; device_filter picks
+    the one on the targeted TV instead of whichever comes first."""
+    resume_payload = {"Items": [{"Id": "ep1", "Name": "Show", "UserData": {"PlaybackPositionTicks": 500}}]}
+    sessions_payload = [
+        {"Id": "sess-living-room", "UserId": "u1", "DeviceName": "Living Room", "PlayState": {}},
+        {"Id": "sess-bedroom", "UserId": "u1", "DeviceName": "Bedroom", "PlayState": {}},
+    ]
+    responses = [_mock_response(resume_payload), _mock_response(sessions_payload)]
+    post_resp = _mock_response({})
+    session = _mock_session(post_resp)
+    session.get = MagicMock(side_effect=responses)
+    with patch("aiohttp.ClientSession", return_value=session):
+        client = JellyfinClient(auth)
+        await client.async_resume("u1", device_filter="bedroom")
+    play_call = session.post.call_args
+    assert "sess-bedroom" in play_call[0][0]
+
+
+@pytest.mark.asyncio
+async def test_async_resume_falls_back_to_first_in_pool_without_filter(auth):
+    resume_payload = {"Items": [{"Id": "ep1", "Name": "Show"}]}
+    sessions_payload = [{"Id": "sess-first", "UserId": "u1", "PlayState": {}}]
+    responses = [_mock_response(resume_payload), _mock_response(sessions_payload)]
+    post_resp = _mock_response({})
+    session = _mock_session(post_resp)
+    session.get = MagicMock(side_effect=responses)
+    with patch("aiohttp.ClientSession", return_value=session):
+        client = JellyfinClient(auth)
+        title = await client.async_resume("u1")
+    assert title == "Show"
+
+
+@pytest.mark.asyncio
+async def test_async_get_now_playing_respects_device_filter(auth):
+    payload = [
+        {"Id": "s1", "DeviceName": "Other TV", "NowPlayingItem": {"Id": "i1", "Name": "Other Show"}, "PlayState": {"IsPaused": False}},
+        {"Id": "s2", "DeviceName": "My TV", "NowPlayingItem": {"Id": "i2", "Name": "My Show"}, "PlayState": {"IsPaused": False}},
+    ]
+    resp = _mock_response(payload)
+    with patch("aiohttp.ClientSession", return_value=_mock_session(resp)):
+        client = JellyfinClient(auth)
+        result = await client.async_get_now_playing(device_filter="My TV")
+    assert result == ("My Show", "My Show")
+
+
+@pytest.mark.asyncio
+async def test_sessions_carry_client_and_device_info(auth):
+    payload = [
+        {
+            "Id": "s1", "UserId": "u1", "UserName": "Miguel",
+            "Client": "Astra", "DeviceName": "Bedroom Fire TV", "DeviceId": "dev-1",
+            "NowPlayingItem": {"Id": "i1", "Name": "Show"},
+            "PlayState": {"IsPaused": False},
+        }
+    ]
+    resp = _mock_response(payload)
+    with patch("aiohttp.ClientSession", return_value=_mock_session(resp)):
+        client = JellyfinClient(auth)
+        sessions = await client.async_get_sessions()
+    sess = sessions[0]
+    assert sess.client == "Astra"
+    assert sess.device_name == "Bedroom Fire TV"
+    assert sess.device_id == "dev-1"
+    assert sess.user_name == "Miguel"

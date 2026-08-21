@@ -17,6 +17,7 @@ from .const import (
     CONF_JELLYFIN_URL,
     CONF_JELLYFIN_API_KEY,
     CONF_JELLYFIN_DEFAULT_USER,
+    CONF_JELLYFIN_TARGET_DEVICE,
     CONF_JELLYFIN_VERIFY_SSL,
     CONF_AI_ENABLED,
     CONF_AI_PROVIDER,
@@ -64,6 +65,10 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._bitrate_idx: int = -1  # -1 = auto; tracks quality step across commands
         self.button_trigger: Any = None
         self._catalog_task: Any = None
+        # Substring matched against a Jellyfin session's DeviceName/Client so
+        # this entry's commands target its own TV, not just whichever
+        # session Jellyfin lists first. Blank = single-TV behavior.
+        self._target_device: str = ""
 
     async def async_setup(self) -> None:
         """Initialize all sub-components."""
@@ -82,6 +87,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             user_id=config.get(CONF_JELLYFIN_DEFAULT_USER) or None,
         )
         self.jellyfin_client = JellyfinClient(auth, verify_ssl=config.get(CONF_JELLYFIN_VERIFY_SSL, True), hass=self.hass)
+        self._target_device = str(config.get(CONF_JELLYFIN_TARGET_DEVICE) or "")
         try:
             await self.jellyfin_client.async_connect()
             self._connected = True
@@ -137,11 +143,23 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch latest status from Jellyfin."""
         try:
             if self.jellyfin_client:
+                from .jellyfin.session_select import pick_now_playing
                 sessions = await self.jellyfin_client.async_get_sessions()
                 self._connected = True
+                now = pick_now_playing(sessions, device_filter=self._target_device)
+                now_playing = None
+                if now and now.item:
+                    now_playing = {
+                        "title": now.item.name,
+                        "client": now.client or None,
+                        "device": now.device_name or None,
+                        "user": now.user_name or None,
+                        "paused": now.is_paused,
+                    }
                 return {
                     "connected": True,
                     "sessions": sessions,
+                    "now_playing": now_playing,
                     "navigation_active": self.navigation_mode.is_active if self.navigation_mode else False,
                     "last_command": self._last_command,
                     "last_media": self._last_media,
@@ -251,6 +269,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             preferred_client_package=preferred_pkg,
             bitrate_presets=BITRATE_PRESETS_KBPS,
             current_bitrate_idx=self._bitrate_idx,
+            device_filter=self._target_device,
         )
         result = await router.async_route(text, self.ai_provider, self.ai_context, ai_enabled=ai_enabled)
         if result.media_title:

@@ -8,17 +8,23 @@
           "jellyfin_url": "Jellyfin URL",
           "jellyfin_api_key": "API Key",
           "jellyfin_username": "Username",
-          "jellyfin_default_user": "Default User ID",
           "jellyfin_verify_ssl": "Verify SSL certificate",
           "test_connection": "Test connection only (don't continue)"
         },
         "data_description": {
           "jellyfin_url": "Full URL including port — e.g. http://192.168.1.10:8096 or https://jellyfin.yourdomain.com",
           "jellyfin_api_key": "Create one in Jellyfin → Dashboard → API Keys. Do not use your login password.",
-          "jellyfin_username": "Optional — used to look up your User ID automatically.",
-          "jellyfin_default_user": "Optional — used for resume, favorites, and history. Leave blank to detect from active sessions.",
+          "jellyfin_username": "Optional — informational only; the next step lets you pick your actual user from a list.",
           "jellyfin_verify_ssl": "Disable if using a self-signed certificate (e.g. Tailscale or local HTTPS).",
           "test_connection": "Check this to verify your credentials without saving — the page will reload with a result."
+        }
+      },
+      "jellyfin_user": {
+        "title": "Which Jellyfin User?",
+        "description": "Pick the Jellyfin user this entry acts as — used for resume, favorites, and watch history. If you're setting up a second TV for someone else on the same server, pick their profile here, not yours.",
+        "data": { "jellyfin_default_user": "Jellyfin User" },
+        "data_description": {
+          "jellyfin_default_user": "Auto-detect picks whichever user Jellyfin reports first — fine for a single-user server, ambiguous once more than one person watches."
         }
       },
       "tv_device": {
@@ -34,11 +40,13 @@
         "description": "Select your Apple TV entity. Make sure the Apple TV integration is set up in HA first.",
         "data": {
           "apple_tv_entity": "Apple TV Entity",
-          "tv_wake_support": "Wake on Command"
+          "tv_wake_support": "Wake on Command",
+          "jellyfin_target_device": "Jellyfin Device Name (optional)"
         },
         "data_description": {
           "apple_tv_entity": "The remote.* or media_player.* entity for your Apple TV from the Apple TV integration.",
-          "tv_wake_support": "Send a wake signal to the Apple TV before playing. Useful if it goes to sleep."
+          "tv_wake_support": "Send a wake signal to the Apple TV before playing. Useful if it goes to sleep.",
+          "jellyfin_target_device": "Only needed with more than one TV/person on this Jellyfin server. Match this TV's Jellyfin session by device name (Jellyfin Dashboard → Devices) or client app name — e.g. 'Living Room' or 'Astra'. Leave blank to control whichever session is active."
         }
       },
       "android_tv": {
@@ -48,13 +56,17 @@
           "android_tv_entity": "Media Player Entity",
           "adb_host": "ADB Host",
           "adb_port": "ADB Port",
-          "tv_wake_support": "Wake on Command"
+          "tv_wake_support": "Wake on Command",
+          "preferred_client_package": "Jellyfin App Package",
+          "jellyfin_target_device": "Jellyfin Device Name (optional)"
         },
         "data_description": {
           "android_tv_entity": "The media_player.* entity created by the Android TV or Fire TV Stick integration in HA.",
           "adb_host": "Optional — IP address of the TV for direct ADB commands (e.g. app launch, deep links). Leave blank to use HA services only.",
           "adb_port": "ADB port on the TV. Default is 5555. Enable ADB debugging on the device: Settings → Device Options → Developer Options.",
-          "tv_wake_support": "Wake the TV before issuing play commands. Recommended for Fire TV devices that auto-sleep."
+          "tv_wake_support": "Wake the TV before issuing play commands. Recommended for Fire TV devices that auto-sleep.",
+          "preferred_client_package": "Android package name 'open Jellyfin' launches — e.g. org.jellyfin.androidtv for the official app. Using Astra, Findroid, or another client? Find its package via 'adb shell pm list packages | grep -i jellyfin' (or the client name) and paste it here.",
+          "jellyfin_target_device": "Only needed with more than one TV/person on this Jellyfin server. Match this TV's Jellyfin session by device name (Jellyfin Dashboard → Devices) or client app name — e.g. 'Living Room' or 'Astra'. Leave blank to control whichever session is active."
         }
       },
       "ai_provider": {
@@ -198,6 +210,14 @@
           "catalog_reindex_interval": "How often to refresh the local media catalog used for voice search. Manual = never automatic."
         }
       },
+      "jellyfin_user": {
+        "title": "Which Jellyfin User?",
+        "description": "Change which Jellyfin user this entry acts as — used for resume, favorites, and watch history.",
+        "data": { "jellyfin_default_user": "Jellyfin User" },
+        "data_description": {
+          "jellyfin_default_user": "Auto-detect picks whichever user Jellyfin reports first — fine for a single-user server, ambiguous once more than one person watches."
+        }
+      },
       "ai_provider": {
         "title": "AI Settings",
         "description": "Turn AI on or off and switch providers. Without AI, only simple rule-based commands work (play, pause, stop, navigate).",
@@ -295,11 +315,13 @@
         "description": "Update the Apple TV entity used for remote navigation.",
         "data": {
           "apple_tv_entity": "Apple TV Entity",
-          "tv_wake_support": "Wake on Command"
+          "tv_wake_support": "Wake on Command",
+          "jellyfin_target_device": "Jellyfin Device Name (optional)"
         },
         "data_description": {
           "apple_tv_entity": "The remote.* or media_player.* entity from the Apple TV integration.",
-          "tv_wake_support": "Wake the Apple TV before issuing play commands."
+          "tv_wake_support": "Wake the Apple TV before issuing play commands.",
+          "jellyfin_target_device": "Only needed with more than one TV/person on this Jellyfin server. Match by device name (Jellyfin Dashboard → Devices) or client app name. Leave blank to control whichever session is active."
         }
       },
       "android_tv": {
@@ -309,13 +331,17 @@
           "android_tv_entity": "Media Player Entity",
           "adb_host": "ADB Host",
           "adb_port": "ADB Port",
-          "tv_wake_support": "Wake on Command"
+          "tv_wake_support": "Wake on Command",
+          "preferred_client_package": "Jellyfin App Package",
+          "jellyfin_target_device": "Jellyfin Device Name (optional)"
         },
         "data_description": {
           "android_tv_entity": "The media_player.* entity from the Android TV integration.",
           "adb_host": "Optional direct ADB IP for app launching and deep links.",
           "adb_port": "Default 5555. Enable ADB debugging on the TV first.",
-          "tv_wake_support": "Send wake signal before play commands. Recommended for Fire TV."
+          "tv_wake_support": "Send wake signal before play commands. Recommended for Fire TV.",
+          "preferred_client_package": "Android package name 'open Jellyfin' launches — e.g. org.jellyfin.androidtv for the official app, or your alternate client's package (find it via 'adb shell pm list packages | grep -i jellyfin').",
+          "jellyfin_target_device": "Only needed with more than one TV/person on this Jellyfin server. Match by device name (Jellyfin Dashboard → Devices) or client app name — e.g. 'Living Room' or 'Astra'. Leave blank to control whichever session is active."
         }
       },
       "nav": {

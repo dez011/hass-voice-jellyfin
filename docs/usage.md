@@ -93,6 +93,12 @@ Outside (or inside) Navigation Mode, natural commands control Jellyfin:
 "what's playing?"
 ```
 
+"open jellyfin" launches the package set as **Jellyfin App Package** in the
+TV device options (default: the official `org.jellyfin.androidtv` app). If
+you're using an alternate client like Astra or Findroid, set that in
+Options → TV Device or "open jellyfin" will try to launch an app that isn't
+installed.
+
 ### When there's more than one match
 
 If a search is ambiguous the integration asks instead of guessing:
@@ -106,6 +112,32 @@ Answer with an ordinal or the title:
 - "batman begins"
 
 Saying anything else drops the question and is handled normally.
+
+---
+
+## 3b. More than one TV / more than one person
+
+Voice Jellyfin doesn't assume you're the only one watching. If you set a
+**Jellyfin Device Name** for a TV during setup (Options → TV Device), every
+command from that entry — play, pause, stop, resume, quality, favorites —
+only ever targets sessions matching that device or client app name. Two
+Fire TVs, two people, no cross-talk: pausing from your entry never pauses
+your brother's show.
+
+Without a device name set (the default), a command acts on whichever
+Jellyfin session is currently active — fine for a single-TV household.
+
+Check `sensor.voice_jellyfin_now_playing` (one per config entry) to see
+exactly what that entry currently sees: title, client app, device, user,
+and paused state. If it's showing the wrong show, your device name filter
+probably doesn't match Jellyfin's actual device/client name — check
+Jellyfin Dashboard → Devices for the exact string. See
+[configuration.md](configuration.md#multiple-tvs--multiple-users) for the
+full multi-TV setup walkthrough.
+
+When a targeted TV has no matching Jellyfin session (e.g. its app isn't
+open), you'll hear "Jellyfin isn't open on `<device name>`" instead of a
+command silently landing on the wrong TV.
 
 ---
 
@@ -143,5 +175,8 @@ lose the fancy free-form phrasing until it's back.
 |---------|-------|
 | Keys don't reach the TV | Is the `androidtv` integration set up, or an ADB host configured? Fire TV needs ADB debugging enabled (Settings → My Fire TV → Developer Options → ADB Debugging) |
 | "No active player session found" | Open the Jellyfin app on the TV first — "open jellyfin" does this by voice |
+| "Jellyfin isn't open on `<name>`" | Your **Jellyfin Device Name** filter (Options → TV Device) doesn't match a currently active session. Check `sensor.voice_jellyfin_now_playing` on another entry for the real device/client name, or open Jellyfin on the TV first |
+| Commands affect the wrong TV | Set a distinct **Jellyfin Device Name** on each entry — see [configuration.md](configuration.md#multiple-tvs--multiple-users) |
+| "open jellyfin" opens the wrong (or no) app | Set **Jellyfin App Package** in Options → TV Device to match the client actually installed (Astra, Findroid, etc.) |
 | Voice does nothing | Confirm the bridge automation calls `voice_jellyfin.voice_command` and check Settings → Devices → Voice Jellyfin sensors |
 | AI replies are odd | Turn AI off in Options — everything above still works rule-based |

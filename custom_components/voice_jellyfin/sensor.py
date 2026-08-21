@@ -23,6 +23,7 @@ async def async_setup_entry(
         VoiceJellyfinDeviceSensor(coordinator),
         VoiceJellyfinLastCommandSensor(coordinator),
         VoiceJellyfinLastMediaSensor(coordinator),
+        VoiceJellyfinNowPlayingSensor(coordinator),
     ])
 
 
@@ -87,3 +88,32 @@ class VoiceJellyfinLastMediaSensor(VoiceJellyfinEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         return (self.coordinator.data or {}).get("last_media", "")
+
+
+class VoiceJellyfinNowPlayingSensor(VoiceJellyfinEntity, SensorEntity):
+    """What's actually playing in Jellyfin right now — which client app,
+    which device, and which user — the visibility that was missing when
+    more than one person/TV shares the same server."""
+
+    _attr_name = "Now Playing"
+    _attr_icon = "mdi:play-circle"
+
+    def __init__(self, coordinator: VoiceJellyfinCoordinator) -> None:
+        super().__init__(coordinator, "now_playing")
+
+    @property
+    def native_value(self) -> str:
+        now = (self.coordinator.data or {}).get("now_playing")
+        if not now or not now.get("title"):
+            return "Nothing playing"
+        return now["title"]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        now = (self.coordinator.data or {}).get("now_playing") or {}
+        return {
+            "client": now.get("client") or "Unknown",
+            "device": now.get("device") or "Unknown",
+            "user": now.get("user") or "Unknown",
+            "paused": now.get("paused", False),
+        }

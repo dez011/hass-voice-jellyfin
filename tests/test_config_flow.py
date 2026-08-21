@@ -55,19 +55,60 @@ async def test_step_jellyfin_connection_error(flow):
 
 
 @pytest.mark.asyncio
-async def test_step_jellyfin_success_advances_to_tv_device(flow):
-    """A valid Jellyfin connection should advance to the TV device chooser."""
-    flow.async_step_tv_device = AsyncMock(return_value={"type": "form", "step_id": "tv_device"})
+async def test_step_jellyfin_success_advances_to_jellyfin_user(flow):
+    """A valid Jellyfin connection should advance to the user picker (which
+    fetched /Users during the connection) before the TV device chooser."""
+    flow.async_step_jellyfin_user = AsyncMock(return_value={"type": "form", "step_id": "jellyfin_user"})
     with patch(
         "custom_components.voice_jellyfin.jellyfin.client.JellyfinClient"
     ) as MockClient:
         MockClient.return_value.async_connect = AsyncMock(return_value={"Version": "10.9"})
         MockClient.return_value.async_close = AsyncMock()
+        MockClient.return_value.async_get_users = AsyncMock(
+            return_value=[{"id": "u1", "name": "Miguel"}]
+        )
         result = await flow.async_step_jellyfin(
             {"jellyfin_url": "http://localhost:8096", "jellyfin_api_key": "abc"}
         )
+    flow.async_step_jellyfin_user.assert_called_once()
+    assert result["step_id"] == "jellyfin_user"
+    assert flow._data["_jellyfin_users"] == [{"id": "u1", "name": "Miguel"}]
+
+
+@pytest.mark.asyncio
+async def test_step_jellyfin_user_list_failure_does_not_block_setup(flow):
+    """If /Users can't be listed, setup still proceeds with just Auto-detect."""
+    flow.async_step_jellyfin_user = AsyncMock(return_value={"type": "form", "step_id": "jellyfin_user"})
+    with patch(
+        "custom_components.voice_jellyfin.jellyfin.client.JellyfinClient"
+    ) as MockClient:
+        MockClient.return_value.async_connect = AsyncMock(return_value={"Version": "10.9"})
+        MockClient.return_value.async_close = AsyncMock()
+        MockClient.return_value.async_get_users = AsyncMock(side_effect=Exception("403"))
+        result = await flow.async_step_jellyfin(
+            {"jellyfin_url": "http://localhost:8096", "jellyfin_api_key": "abc"}
+        )
+    assert result["step_id"] == "jellyfin_user"
+    assert flow._data["_jellyfin_users"] == []
+
+
+@pytest.mark.asyncio
+async def test_step_jellyfin_user_picks_default_user_and_advances(flow):
+    flow.async_step_tv_device = AsyncMock(return_value={"type": "form", "step_id": "tv_device"})
+    flow._data["_jellyfin_users"] = [{"id": "u1", "name": "Miguel"}]
+    result = await flow.async_step_jellyfin_user({"jellyfin_default_user": "u1"})
     flow.async_step_tv_device.assert_called_once()
     assert result["step_id"] == "tv_device"
+    assert flow._data["jellyfin_default_user"] == "u1"
+    assert "_jellyfin_users" not in flow._data
+
+
+@pytest.mark.asyncio
+async def test_step_jellyfin_user_shows_auto_detect_option(flow):
+    flow._data["_jellyfin_users"] = [{"id": "u1", "name": "Miguel"}, {"id": "u2", "name": "Brother"}]
+    result = await flow.async_step_jellyfin_user()
+    assert result["type"] == "form"
+    assert result["step_id"] == "jellyfin_user"
 
 
 @pytest.mark.asyncio

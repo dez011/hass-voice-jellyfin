@@ -184,7 +184,7 @@ async def test_resume_intent_falls_back_to_resume_items_when_nothing_paused():
 
     result = await router.async_route("resume", provider, context)
 
-    jellyfin.async_resume.assert_called_once_with("user-001")
+    jellyfin.async_resume.assert_called_once_with("user-001", device_filter=None)
     assert result.media_title == "Breaking Bad S01E01"
 
 
@@ -375,7 +375,7 @@ async def test_resume_with_null_user_id_falls_back_to_auth_user():
     provider = _provider_returning({"intent": "RESUME", "params": {"user_id": None}})
 
     await router.async_route("resume", provider, AIContext())
-    jellyfin.async_resume.assert_called_once_with("auth-user")
+    jellyfin.async_resume.assert_called_once_with("auth-user", device_filter=None)
 
 
 @pytest.mark.asyncio
@@ -428,3 +428,88 @@ async def test_parse_null_speech_is_empty_string():
     router = _make_router()
     result = router._parse('{"intent": "SEARCH", "params": {"query": "x"}, "speech": null}')
     assert result.speech_reply == ""
+
+
+# ---------------------------------------------------------------------------
+# Device targeting — commands must stay on the router's configured TV
+# ---------------------------------------------------------------------------
+
+def _router_with_device_filter(device_filter, jellyfin=None, tv=None):
+    return IntentRouter(
+        jellyfin=jellyfin or MagicMock(),
+        tv=tv or MagicMock(),
+        nav=None,
+        hass=MagicMock(),
+        device_filter=device_filter,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pause_targets_only_matching_device():
+    jellyfin = MagicMock()
+    jellyfin.async_get_sessions = AsyncMock(return_value=[
+        PlaybackSession(id="s-mine", user_id="u1", item=MediaItem(id="i1", name="X", type="Movie"), device_name="Living Room"),
+        PlaybackSession(id="s-brother", user_id="u2", item=MediaItem(id="i2", name="Y", type="Movie"), device_name="Bedroom"),
+    ])
+    jellyfin.async_pause = AsyncMock()
+    router = _router_with_device_filter("Living Room", jellyfin=jellyfin)
+    provider = _provider_returning({"intent": "PAUSE", "params": {}})
+
+    await router.async_route("pause", provider, AIContext())
+    jellyfin.async_pause.assert_awaited_once_with("s-mine")
+
+
+@pytest.mark.asyncio
+async def test_pause_with_no_matching_device_does_nothing():
+    """No cross-talk: if the targeted TV has no session, pause must not
+    silently act on someone else's."""
+    jellyfin = MagicMock()
+    jellyfin.async_get_sessions = AsyncMock(return_value=[
+        PlaybackSession(id="s-brother", user_id="u2", item=MediaItem(id="i2", name="Y", type="Movie"), device_name="Bedroom"),
+    ])
+    jellyfin.async_pause = AsyncMock()
+    router = _router_with_device_filter("Living Room", jellyfin=jellyfin)
+    provider = _provider_returning({"intent": "PAUSE", "params": {}})
+
+    await router.async_route("pause", provider, AIContext())
+    jellyfin.async_pause.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_play_with_no_matching_device_names_the_target_in_reply():
+    jellyfin = MagicMock()
+    item = MediaItem(id="i1", name="Inception", type="Movie")
+    jellyfin.async_search = AsyncMock(return_value=[item])
+    jellyfin.async_get_sessions = AsyncMock(return_value=[])
+    router = _router_with_device_filter("Living Room", jellyfin=jellyfin)
+    provider = _provider_returning({"intent": "PLAY", "params": {"query": "Inception"}})
+
+    result = await router.async_route("play inception", provider, AIContext())
+    assert "Living Room" in result.speech_reply
+
+
+@pytest.mark.asyncio
+async def test_now_playing_omits_device_note_when_already_targeted():
+    jellyfin = MagicMock()
+    jellyfin.async_get_sessions = AsyncMock(return_value=[
+        PlaybackSession(id="s1", user_id="u1", item=MediaItem(id="i1", name="Show", type="Movie"), device_name="Living Room"),
+    ])
+    router = _router_with_device_filter("Living Room", jellyfin=jellyfin)
+    provider = _provider_returning({"intent": "NOW_PLAYING", "params": {}})
+
+    result = await router.async_route("what's playing", provider, AIContext())
+    assert "Living Room" not in result.speech_reply
+    assert "Show" in result.speech_reply
+
+
+@pytest.mark.asyncio
+async def test_now_playing_names_device_when_untargeted():
+    jellyfin = MagicMock()
+    jellyfin.async_get_sessions = AsyncMock(return_value=[
+        PlaybackSession(id="s1", user_id="u1", item=MediaItem(id="i1", name="Show", type="Movie"), device_name="Living Room"),
+    ])
+    router = _make_router(jellyfin=jellyfin)  # no device_filter
+    provider = _provider_returning({"intent": "NOW_PLAYING", "params": {}})
+
+    result = await router.async_route("what's playing", provider, AIContext())
+    assert "Living Room" in result.speech_reply

@@ -124,6 +124,16 @@ class JellyfinClient:
     # Library
     # ------------------------------------------------------------------
 
+    async def async_get_users(self) -> list[dict[str, str]]:
+        """Return every Jellyfin user visible to this API key, for the
+        setup-wizard user picker: [{"id": ..., "name": ...}, ...]."""
+        data = await self._get_json(f"{self._auth.base_url()}/Users")
+        return [
+            {"id": u["Id"], "name": u.get("Name", "")}
+            for u in (data or [])
+            if u.get("Id")
+        ]
+
     async def async_get_libraries(self) -> list[Library]:
         data = await self._get_json(f"{self._auth.base_url()}/Library/VirtualFolders")
         return [Library.from_api(item) for item in (data or [])]
@@ -457,12 +467,11 @@ class JellyfinClient:
             return ep["Id"], ep.get("Name", "")
         return None
 
-    async def async_get_now_playing(self) -> Optional[tuple[str, str]]:
+    async def async_get_now_playing(self, device_filter: Optional[str] = None) -> Optional[tuple[str, str]]:
         """Return (item_name, description) for what's currently playing, or None."""
+        from .session_select import pick_now_playing
         sessions = await self.async_get_sessions()
-        active = next((s for s in sessions if s.item and not s.is_paused), None)
-        if not active:
-            active = next((s for s in sessions if s.item), None)
+        active = pick_now_playing(sessions, device_filter=device_filter)
         if not active or not active.item:
             return None
         item = active.item
@@ -513,18 +522,30 @@ class JellyfinClient:
         sessions = await self.async_get_sessions()
         return [s for s in sessions if s.item]
 
-    async def async_resume(self, user_id: str) -> Optional[str]:
-        """Resume the first in-progress item on the active session."""
+    async def async_resume(self, user_id: str, device_filter: Optional[str] = None) -> Optional[str]:
+        """Resume the first in-progress item on the active session.
+
+        Picks among sessions belonging to *user_id* (or with no known user);
+        when *device_filter* matches a device/client within that pool, that
+        session is preferred so resume targets the right TV in a multi-TV
+        household instead of whichever session Jellyfin lists first.
+        """
         items = await self.async_get_resume_items(user_id, limit=1)
         if not items:
             _LOGGER.debug("No resume items found for user %s", user_id)
             return None
 
         sessions = await self.async_get_sessions()
-        active = next(
-            (s for s in sessions if s.user_id == user_id or not s.user_id),
-            next(iter(sessions), None),
-        )
+        pool = [s for s in sessions if s.user_id == user_id or not s.user_id] or sessions
+        active = None
+        needle = (device_filter or "").strip().lower()
+        if needle:
+            active = next(
+                (s for s in pool if needle in (s.device_name or "").lower() or needle in (s.client or "").lower()),
+                None,
+            )
+        if active is None:
+            active = next(iter(pool), None)
         if not active:
             _LOGGER.warning("No active session found for resume")
             return None

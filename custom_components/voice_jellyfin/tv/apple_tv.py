@@ -74,3 +74,18 @@ class AppleTVController:
             )
         except Exception as exc:
             _LOGGER.warning("Apple TV wake failed: %s", exc)
+
+    async def async_launch_app(self, package_name: str) -> bool:
+        """Attempt to bring the Jellyfin app to the foreground.
+
+        HA's Apple TV integration has no generic "launch app by id" call —
+        tvOS deep-linking is far more restricted than Android's intent
+        system. This returns False so the caller gives a clear "couldn't
+        open Jellyfin" reply instead of a confusing generic error.
+        """
+        _LOGGER.debug(
+            "App launch by package (%s) is not supported on Apple TV; "
+            "open the Jellyfin app manually or use a Siri Shortcut/remote automation.",
+            package_name,
+        )
+        return False

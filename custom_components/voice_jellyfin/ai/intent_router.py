@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from .base import AIProvider
 from .context import AIContext
+from ..jellyfin.session_select import pick_now_playing, pick_session
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,18 +109,39 @@ class IntentRouter:
         preferred_client_package: str = "org.jellyfin.androidtv",
         bitrate_presets: Optional[list[int]] = None,
         current_bitrate_idx: int = -1,
+        device_filter: Optional[str] = None,
     ) -> None:
         self._jellyfin = jellyfin
         self._tv = tv
         self._nav = nav
         self._hass = hass
         self._preferred_client_package = preferred_client_package
+        # Substring matched against a Jellyfin session's DeviceName/Client so
+        # commands from this entry target ITS TV in a multi-TV household,
+        # not just whichever session the Jellyfin API happens to list first.
+        self._device_filter = (device_filter or "").strip() or None
         from ..const import BITRATE_PRESETS_KBPS
         self._bitrate_presets = bitrate_presets or BITRATE_PRESETS_KBPS
         self._bitrate_idx = current_bitrate_idx  # -1 = auto (no cap)
         tv_label = _TV_LABELS.get(tv_type)
         tv_clause = f" and {tv_label}" if tv_label else ""
         self._system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(tv_clause=tv_clause)
+
+    def _pick(
+        self, sessions: list[Any], require_item: bool = True, paused: Optional[bool] = None
+    ) -> Optional[Any]:
+        """Pick the session this entry's commands should target."""
+        return pick_session(sessions, device_filter=self._device_filter, require_item=require_item, paused=paused)
+
+    def _pick_now_playing(self, sessions: list[Any]) -> Optional[Any]:
+        return pick_now_playing(sessions, device_filter=self._device_filter)
+
+    def _no_session_reply(self) -> str:
+        """Speech for 'nothing to act on' — names the target TV when one is
+        configured, so a miss reads as 'wrong/no TV' not a generic failure."""
+        if self._device_filter:
+            return f"Jellyfin isn't open on {self._device_filter}."
+        return "No active player session found."
 
     async def async_route(
         self,
@@ -374,9 +396,9 @@ class IntentRouter:
     ) -> IntentResult:
         """Play *item* on the active session (resolving series targets)."""
         sessions = await self._jellyfin.async_get_sessions()
-        session = next(iter(sessions), None)
+        session = self._pick(sessions, require_item=False)
         if not session:
-            result.speech_reply = "No active player session found."
+            result.speech_reply = self._no_session_reply()
             return result
 
         play_id = item.id
@@ -474,7 +496,7 @@ class IntentRouter:
             return result
         # Check for a currently paused session first — unpause it
         sessions = await self._jellyfin.async_get_sessions()
-        paused = next((s for s in sessions if s.item and s.is_paused), None)
+        paused = self._pick(sessions, require_item=True, paused=True)
         if paused:
             await self._jellyfin.async_unpause(paused.id)
             name = paused.item.name if paused.item else "playback"
@@ -484,7 +506,7 @@ class IntentRouter:
         # No paused session — resume first in-progress item.
         # `or` (not a .get default) so a JSON null user_id still falls back.
         user_id = params.get("user_id") or self._jellyfin._auth.user_id or ""
-        title = await self._jellyfin.async_resume(user_id)
+        title = await self._jellyfin.async_resume(user_id, device_filter=self._device_filter)
         if title:
             result.media_title = title
             result.speech_reply = result.speech_reply or f"Resuming {title}."
@@ -523,9 +545,9 @@ class IntentRouter:
             return result
         ep_id, ep_name = latest
         sessions = await self._jellyfin.async_get_sessions()
-        session = next(iter(sessions), None)
+        session = self._pick(sessions, require_item=False)
         if not session:
-            result.speech_reply = "No active player session found."
+            result.speech_reply = self._no_session_reply()
             return result
         await self._ensure_tv_awake()
         await self._jellyfin.async_play(session.id, ep_id)
@@ -560,7 +582,7 @@ class IntentRouter:
         if not self._jellyfin:
             return result
         sessions = await self._jellyfin.async_get_sessions()
-        active = next((s for s in sessions if s.item), None)
+        active = self._pick(sessions, require_item=True)
         if not active:
             result.speech_reply = "Nothing is playing."
             return result
@@ -589,7 +611,7 @@ class IntentRouter:
         if not self._jellyfin:
             return result
         sessions = await self._jellyfin.async_get_sessions()
-        active = next((s for s in sessions if s.item), None)
+        active = self._pick(sessions, require_item=True)
         if not active or not active.item:
             result.speech_reply = "Nothing is playing to favorite."
             return result
@@ -603,15 +625,21 @@ class IntentRouter:
         if not self._jellyfin:
             return result
         sessions = await self._jellyfin.async_get_sessions()
-        active = next((s for s in sessions if s.item and not s.is_paused), None)
-        if not active:
-            active = next((s for s in sessions if s.item), None)
+        active = self._pick_now_playing(sessions)
         if not active or not active.item:
-            result.speech_reply = "Nothing is currently playing."
+            if self._device_filter:
+                result.speech_reply = f"Nothing is playing on {self._device_filter}."
+            else:
+                result.speech_reply = "Nothing is currently playing."
             return result
         name = active.item.name
         paused = " (paused)" if active.is_paused else ""
-        result.speech_reply = result.speech_reply or f"Now playing: {name}{paused}."
+        # Only name the device when we're not already scoped to one TV —
+        # otherwise "playing on X" is redundant with the question asked.
+        device_note = ""
+        if not self._device_filter and active.device_name:
+            device_note = f" on {active.device_name}"
+        result.speech_reply = result.speech_reply or f"Now playing: {name}{paused}{device_note}."
         return result
 
     async def _handle_open_app(self, result: IntentResult) -> IntentResult:
@@ -646,7 +674,7 @@ class IntentRouter:
         if not self._jellyfin:
             return None
         sessions = await self._jellyfin.async_get_sessions()
-        active = next((s for s in sessions if s.item), None)
+        active = self._pick(sessions, require_item=True)
         return active.id if active else None
 
     async def _send_key(self, key: str) -> None:

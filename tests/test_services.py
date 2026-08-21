@@ -10,6 +10,7 @@ from custom_components.voice_jellyfin.const import DOMAIN
 
 def _make_mock_coordinator():
     coord = MagicMock()
+    coord._target_device = ""  # explicit: MagicMock auto-attrs are truthy and break device filtering
     coord.async_send_command = AsyncMock(return_value="Done.")
     coord.jellyfin_client = MagicMock()
     coord.jellyfin_client.async_get_sessions = AsyncMock(return_value=[])
@@ -176,6 +177,8 @@ def _session_with_item(session_id: str):
     sess = MagicMock()
     sess.id = session_id
     sess.item = MagicMock()
+    sess.device_name = ""
+    sess.client = ""
     return sess
 
 

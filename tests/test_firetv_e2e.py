@@ -41,7 +41,15 @@ ENTRY_DATA = {
 class FireTVHarness:
     """Real coordinator + nav mode + Android TV controller over a fake HA bus."""
 
-    def __init__(self, ai_enabled: bool = False, ai_provider=None):
+    def __init__(
+        self,
+        ai_enabled: bool = False,
+        ai_provider=None,
+        target_device: str = "",
+        entity_id: str = FIRE_TV_ENTITY,
+        entry_id: str = "e2e-entry",
+        shared_jellyfin=None,
+    ):
         self.adb_commands: list[str] = []
         self.service_calls: list[tuple[str, str, dict]] = []
 
@@ -67,25 +75,34 @@ class FireTVHarness:
         self.hass = hass
 
         entry = MagicMock()
-        entry.entry_id = "e2e-entry"
-        entry.data = {**ENTRY_DATA, "ai_enabled": ai_enabled}
+        entry.entry_id = entry_id
+        entry.data = {
+            **ENTRY_DATA, "ai_enabled": ai_enabled,
+            "android_tv_entity": entity_id, "jellyfin_target_device": target_device,
+        }
         entry.options = {}
         self.entry = entry
 
-        # Fake Jellyfin server
+        # Fake Jellyfin server. Pass shared_jellyfin (with its own
+        # async_get_sessions covering multiple devices) so two harnesses can
+        # represent two TVs/entries pointed at the SAME physical server —
+        # the scenario device targeting exists for.
         self.now_playing_session = PlaybackSession(
             id="sess-1", user_id="user-1",
             item=MediaItem(id="item-now", name="Something", type="Movie"),
             position_ticks=0, is_paused=False,
         )
-        jf = MagicMock()
-        jf.async_get_sessions = AsyncMock(return_value=[self.now_playing_session])
-        jf.async_play = AsyncMock()
-        jf.async_pause = AsyncMock()
-        jf.async_stop = AsyncMock()
-        jf.async_search = AsyncMock(return_value=[])
-        jf._auth = MagicMock()
-        jf._auth.user_id = "user-1"
+        if shared_jellyfin is not None:
+            jf = shared_jellyfin
+        else:
+            jf = MagicMock()
+            jf.async_get_sessions = AsyncMock(return_value=[self.now_playing_session])
+            jf.async_play = AsyncMock()
+            jf.async_pause = AsyncMock()
+            jf.async_stop = AsyncMock()
+            jf.async_search = AsyncMock(return_value=[])
+            jf._auth = MagicMock()
+            jf._auth.user_id = "user-1"
         self.jellyfin = jf
 
         # Assemble the real runtime objects
@@ -98,8 +115,11 @@ class FireTVHarness:
         coordinator.jellyfin_client = jf
         coordinator.ai_provider = ai_provider
         coordinator.ai_context = AIContext()
-        coordinator.tv_controller = AndroidTVController(hass, FIRE_TV_ENTITY)
+        coordinator.tv_controller = AndroidTVController(hass, entity_id)
         coordinator.navigation_mode = NavigationMode(hass, entry, coordinator)
+        # Harness builds the coordinator directly (skips async_setup), so
+        # mirror what async_setup would have read from config.
+        coordinator._target_device = target_device
         self.coordinator = coordinator
 
         # Register the real services and grab the voice entry point
@@ -341,3 +361,122 @@ async def test_working_ai_is_used_when_enabled():
     provider.async_query.assert_awaited_once()
     assert tv.keyevents() == [20]
     assert reply == "Going down."
+
+
+# ---------------------------------------------------------------------------
+# Two TVs, one Jellyfin server — the multi-household scenario
+# ---------------------------------------------------------------------------
+
+def _shared_two_device_server():
+    """One Jellyfin server with two active sessions: yours and your
+    brother's, on different TVs."""
+    sess_living_room = PlaybackSession(
+        id="sess-living-room", user_id="user-1",
+        item=MediaItem(id="item-a", name="The Dark Knight", type="Movie"),
+        device_name="Living Room Fire TV", client="Jellyfin Android TV",
+    )
+    sess_bedroom = PlaybackSession(
+        id="sess-bedroom", user_id="user-2",
+        item=MediaItem(id="item-b", name="Bluey", type="Series"),
+        device_name="Bedroom Fire TV", client="Astra",
+    )
+    jf = MagicMock()
+    jf.async_get_sessions = AsyncMock(return_value=[sess_living_room, sess_bedroom])
+    jf.async_play = AsyncMock()
+    jf.async_pause = AsyncMock()
+    jf.async_stop = AsyncMock()
+    jf.async_search = AsyncMock(return_value=[])
+    jf._auth = MagicMock()
+    jf._auth.user_id = "user-1"
+    return jf, sess_living_room, sess_bedroom
+
+
+@pytest.mark.asyncio
+async def test_two_tvs_pause_targets_only_their_own_session():
+    """The scenario this feature exists for: two people, two Fire TVs, one
+    Jellyfin server. Pausing from one entry must never touch the other's."""
+    shared_jf, sess_a, sess_b = _shared_two_device_server()
+    tv_a = FireTVHarness(
+        target_device="Living Room", entity_id="media_player.living_room",
+        entry_id="entry-a", shared_jellyfin=shared_jf,
+    )
+    tv_b = FireTVHarness(
+        target_device="Bedroom", entity_id="media_player.bedroom",
+        entry_id="entry-b", shared_jellyfin=shared_jf,
+    )
+
+    await tv_a.say("pause")
+    shared_jf.async_pause.assert_awaited_once_with("sess-living-room")
+
+    shared_jf.async_pause.reset_mock()
+    await tv_b.say("pause")
+    shared_jf.async_pause.assert_awaited_once_with("sess-bedroom")
+
+
+@pytest.mark.asyncio
+async def test_two_tvs_stop_targets_only_their_own_session():
+    shared_jf, sess_a, sess_b = _shared_two_device_server()
+    tv_a = FireTVHarness(
+        target_device="Living Room", entity_id="media_player.living_room",
+        entry_id="entry-a", shared_jellyfin=shared_jf,
+    )
+    tv_b = FireTVHarness(
+        target_device="Bedroom", entity_id="media_player.bedroom",
+        entry_id="entry-b", shared_jellyfin=shared_jf,
+    )
+
+    await tv_b.say("stop")
+    shared_jf.async_stop.assert_awaited_once_with("sess-bedroom")
+    shared_jf.async_stop.reset_mock()
+
+    await tv_a.say("stop")
+    shared_jf.async_stop.assert_awaited_once_with("sess-living-room")
+
+
+@pytest.mark.asyncio
+async def test_two_tvs_play_targets_only_their_own_session():
+    shared_jf, sess_a, sess_b = _shared_two_device_server()
+    item = MediaItem(id="item-new", name="Interstellar", type="Movie")
+    shared_jf.async_search = AsyncMock(return_value=[item])
+    tv_a = FireTVHarness(
+        target_device="Living Room", entity_id="media_player.living_room",
+        entry_id="entry-a", shared_jellyfin=shared_jf,
+    )
+
+    await tv_a.say("play interstellar")
+    shared_jf.async_play.assert_awaited_once_with("sess-living-room", "item-new", start_ticks=0)
+
+
+@pytest.mark.asyncio
+async def test_untargeted_tv_without_device_filter_still_works_alone():
+    """A single-TV household (no target_device configured) keeps the
+    original simple behavior — first session found."""
+    shared_jf, sess_a, sess_b = _shared_two_device_server()
+    tv = FireTVHarness(shared_jellyfin=shared_jf)  # no target_device
+    await tv.say("pause")
+    shared_jf.async_pause.assert_awaited_once_with("sess-living-room")
+
+
+@pytest.mark.asyncio
+async def test_now_playing_sensor_data_isolated_per_tv():
+    """coordinator._async_update_data() for each entry must only surface
+    its own TV's now-playing info, not whichever session Jellyfin lists
+    first — this is what feeds the Now Playing sensor per config entry."""
+    shared_jf, sess_a, sess_b = _shared_two_device_server()
+    tv_a = FireTVHarness(
+        target_device="Living Room", entity_id="media_player.living_room",
+        entry_id="entry-a", shared_jellyfin=shared_jf,
+    )
+    tv_b = FireTVHarness(
+        target_device="Bedroom", entity_id="media_player.bedroom",
+        entry_id="entry-b", shared_jellyfin=shared_jf,
+    )
+
+    data_a = await tv_a.coordinator._async_update_data()
+    data_b = await tv_b.coordinator._async_update_data()
+
+    assert data_a["now_playing"]["title"] == "The Dark Knight"
+    assert data_a["now_playing"]["device"] == "Living Room Fire TV"
+    assert data_b["now_playing"]["title"] == "Bluey"
+    assert data_b["now_playing"]["device"] == "Bedroom Fire TV"
+    assert data_b["now_playing"]["client"] == "Astra"

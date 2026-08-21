@@ -67,6 +67,10 @@ class PlaybackSession:
     item: Optional[MediaItem]
     position_ticks: int = 0  # 100-nanosecond ticks
     is_paused: bool = False
+    client: str = ""        # Jellyfin client app name, e.g. "Astra", "Jellyfin Android TV"
+    device_name: str = ""   # Human-readable device name set in the client app
+    device_id: str = ""
+    user_name: str = ""
 
     @property
     def position_seconds(self) -> float:
@@ -88,4 +92,8 @@ class PlaybackSession:
             item=item,
             position_ticks=play_state.get("PositionTicks", 0),
             is_paused=play_state.get("IsPaused", False),
+            client=data.get("Client", ""),
+            device_name=data.get("DeviceName", ""),
+            device_id=data.get("DeviceId", ""),
+            user_name=data.get("UserName", ""),
         )

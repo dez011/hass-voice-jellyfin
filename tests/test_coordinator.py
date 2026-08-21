@@ -221,3 +221,91 @@ async def test_setup_uses_adb_controller_without_entity(mock_hass, mock_config_e
 
     assert isinstance(coordinator.tv_controller, ADBTVController)
     assert coordinator._current_device == "adb://192.168.1.50:5555"
+
+
+# ---------------------------------------------------------------------------
+# now_playing computation and target-device wiring
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_async_update_data_computes_now_playing(mock_hass, mock_config_entry):
+    from custom_components.voice_jellyfin.jellyfin.models import MediaItem, PlaybackSession
+
+    coordinator = _make_coordinator(mock_hass, mock_config_entry)
+    coordinator.navigation_mode = None
+    coordinator._target_device = ""
+    client = MagicMock()
+    client.async_get_sessions = AsyncMock(return_value=[
+        PlaybackSession(
+            id="s1", user_id="u1",
+            item=MediaItem(id="i1", name="The Matrix", type="Movie"),
+            is_paused=False, client="Astra", device_name="Bedroom", user_name="Brother",
+        )
+    ])
+    coordinator.jellyfin_client = client
+
+    data = await coordinator._async_update_data()
+    assert data["now_playing"] == {
+        "title": "The Matrix", "client": "Astra", "device": "Bedroom",
+        "user": "Brother", "paused": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_async_update_data_now_playing_none_when_nothing_playing(mock_hass, mock_config_entry):
+    coordinator = _make_coordinator(mock_hass, mock_config_entry)
+    coordinator.navigation_mode = None
+    coordinator._target_device = ""
+    client = MagicMock()
+    client.async_get_sessions = AsyncMock(return_value=[])
+    coordinator.jellyfin_client = client
+
+    data = await coordinator._async_update_data()
+    assert data["now_playing"] is None
+
+
+@pytest.mark.asyncio
+async def test_async_update_data_now_playing_respects_target_device(mock_hass, mock_config_entry):
+    from custom_components.voice_jellyfin.jellyfin.models import MediaItem, PlaybackSession
+
+    coordinator = _make_coordinator(mock_hass, mock_config_entry)
+    coordinator.navigation_mode = None
+    coordinator._target_device = "Living Room"
+    client = MagicMock()
+    client.async_get_sessions = AsyncMock(return_value=[
+        PlaybackSession(id="s1", user_id="u1", item=MediaItem(id="i1", name="Other", type="Movie"), device_name="Bedroom"),
+    ])
+    coordinator.jellyfin_client = client
+
+    data = await coordinator._async_update_data()
+    assert data["now_playing"] is None
+
+
+@pytest.mark.asyncio
+async def test_setup_reads_target_device_from_config(mock_hass, mock_config_entry):
+    import custom_components.voice_jellyfin.navigation.trigger  # noqa: F401
+    import custom_components.voice_jellyfin.navigation.mode  # noqa: F401
+
+    data = dict(mock_config_entry.data)
+    data["jellyfin_target_device"] = "Living Room"
+    mock_config_entry.data = data
+
+    coordinator = _make_coordinator(mock_hass, mock_config_entry)
+
+    def _consume_bg_task(coro, name=None):
+        coro.close()
+        return MagicMock()
+
+    mock_hass.async_create_background_task = MagicMock(side_effect=_consume_bg_task)
+    fake_client = MagicMock()
+    fake_client.async_connect = AsyncMock(return_value={"Version": "10.9"})
+
+    with patch("custom_components.voice_jellyfin.jellyfin.client.JellyfinClient", return_value=fake_client), \
+         patch("custom_components.voice_jellyfin.navigation.mode.NavigationMode"), \
+         patch("custom_components.voice_jellyfin.navigation.trigger.ButtonTrigger") as trigger_cls, \
+         patch("custom_components.voice_jellyfin.ai.providers.build_provider", new=AsyncMock(return_value=None)):
+        trigger_cls.return_value.async_attach = AsyncMock()
+        coordinator.async_refresh = AsyncMock()
+        await coordinator.async_setup()
+
+    assert coordinator._target_device == "Living Room"
