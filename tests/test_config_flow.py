@@ -295,3 +295,102 @@ async def test_options_ai_disabled_short_circuits():
     oflow, captured = _make_options_flow()
     await oflow.async_step_ai_provider({"ai_enabled": False, "ai_provider": "openai"})
     assert captured["data"]["ai_enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# Voice Command Tester step — no-microphone command testing
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_tester_command_action_routes_through_full_pipeline():
+    """The 'command' action should hit coordinator.async_handle_voice (the
+    same entry point real speech goes through), not the narrow search-only
+    path used by the 'search'/'play' actions."""
+    from custom_components.voice_jellyfin.const import DOMAIN
+
+    oflow, _ = _make_options_flow()
+    coordinator = MagicMock()
+    coordinator.async_handle_voice = AsyncMock(return_value="Navigation mode on.")
+    oflow.hass.data = {DOMAIN: {"entry-1": coordinator}}
+
+    await oflow.async_step_test(
+        {"action": "command", "query": "navigation mode", "preset": "custom"}
+    )
+
+    coordinator.async_handle_voice.assert_awaited_once_with("navigation mode")
+    assert "Navigation mode on." in oflow._test_results
+
+
+@pytest.mark.asyncio
+async def test_tester_command_action_uses_preset_over_query():
+    """Picking a quick-command preset should win over stale/free text left
+    in the query box — the whole point of the command-builder dropdown."""
+    from custom_components.voice_jellyfin.const import DOMAIN
+
+    oflow, _ = _make_options_flow()
+    coordinator = MagicMock()
+    coordinator.async_handle_voice = AsyncMock(return_value="")
+    oflow.hass.data = {DOMAIN: {"entry-1": coordinator}}
+
+    await oflow.async_step_test(
+        {"action": "command", "query": "ignored leftover text", "preset": "open jellyfin"}
+    )
+
+    coordinator.async_handle_voice.assert_awaited_once_with("open jellyfin")
+
+
+@pytest.mark.asyncio
+async def test_tester_command_action_requires_text():
+    oflow, _ = _make_options_flow()
+    await oflow.async_step_test({"action": "command", "query": "", "preset": "custom"})
+    assert "Enter a command" in oflow._test_results
+
+
+@pytest.mark.asyncio
+async def test_tester_command_action_no_coordinator():
+    from custom_components.voice_jellyfin.const import DOMAIN
+
+    oflow, _ = _make_options_flow()
+    oflow.hass.data = {DOMAIN: {}}
+
+    await oflow.async_step_test(
+        {"action": "command", "query": "open jellyfin", "preset": "custom"}
+    )
+
+    assert "Coordinator not available" in oflow._test_results
+
+
+@pytest.mark.asyncio
+async def test_tester_command_action_reports_pipeline_error():
+    from custom_components.voice_jellyfin.const import DOMAIN
+
+    oflow, _ = _make_options_flow()
+    coordinator = MagicMock()
+    coordinator.async_handle_voice = AsyncMock(side_effect=RuntimeError("boom"))
+    oflow.hass.data = {DOMAIN: {"entry-1": coordinator}}
+
+    await oflow.async_step_test(
+        {"action": "command", "query": "play the dark knight", "preset": "custom"}
+    )
+
+    assert "boom" in oflow._test_results
+
+
+@pytest.mark.asyncio
+async def test_tester_search_action_unaffected_by_preset_field():
+    """Adding the preset dropdown must not change existing search behaviour
+    when a real search/play action is selected."""
+    from custom_components.voice_jellyfin.const import DOMAIN
+
+    oflow, _ = _make_options_flow()
+    coordinator = MagicMock()
+    coordinator.jellyfin_client = MagicMock()
+    coordinator.jellyfin_client.async_search = AsyncMock(return_value=[])
+    oflow.hass.data = {DOMAIN: {"entry-1": coordinator}}
+
+    await oflow.async_step_test(
+        {"action": "search", "query": "batman", "preset": "custom", "type_filter": "all"}
+    )
+
+    coordinator.jellyfin_client.async_search.assert_awaited_once()
+    assert 'No results for "batman"' in oflow._test_results

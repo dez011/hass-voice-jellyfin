@@ -129,6 +129,7 @@ After initial setup, go to **Settings → Devices & Services → Voice Jellyfin 
 - Navigation timeout, wake phrase, spoken confirmation, hot mic phrase
 - Accessibility button entity
 - Re-index the media catalog, or run a search/playback test against this entry's server and TV
+- **Voice Command Tester** — search/play Jellyfin lookups directly, or pick "Test voice command" (free text or a Quick command preset) to run text through the exact same pipeline real speech uses, without a microphone. See [Testing without a microphone](usage.md#testing-without-a-microphone).
 
 Each entry's options are independent — reconfiguring one TV's device name filter or user doesn't touch any other entry.
 

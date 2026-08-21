@@ -370,16 +370,18 @@
       },
       "test": {
         "title": "Voice Command Tester",
-        "description": "Test voice search and playback without speaking. Type a query to see what Voice Jellyfin would find and play.\n\n{results}",
+        "description": "Test voice commands without a microphone. Search/play test Jellyfin lookups directly; 'Test voice command' sends text through the exact same pipeline a spoken command takes (wake phrase, navigation mode, AI or rule-based routing).\n\n{results}",
         "data": {
-          "query": "Search query",
+          "query": "Search query / command text",
           "type_filter": "Filter by type",
+          "preset": "Quick command",
           "action": "Action"
         },
         "data_description": {
-          "query": "Type what you would say — e.g. 'The Dark Knight' or 'a comedy from 2010'.",
-          "type_filter": "Narrow results to movies, shows, or episodes.",
-          "action": "Search only shows results. Play sends the top result to the TV."
+          "query": "Type what you would say — e.g. 'The Dark Knight', 'a comedy from 2010', or 'open jellyfin'.",
+          "type_filter": "Narrow search results to movies, shows, or episodes. Ignored by 'Test voice command'.",
+          "preset": "Pick a common phrase instead of typing — used by 'Test voice command' when set to anything other than Custom.",
+          "action": "Search/Play test Jellyfin lookups. Test voice command runs the full pipeline, exactly like speaking."
         }
       }
     },

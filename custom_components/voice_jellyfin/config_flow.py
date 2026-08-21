@@ -590,8 +590,21 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
             type_filter = user_input.get("type_filter") or None
             if type_filter == "all":
                 type_filter = None
+            preset = user_input.get("preset") or "custom"
+            command_text = query if preset == "custom" else preset
 
-            if not query:
+            if action == "command":
+                if not command_text:
+                    self._test_results = "⚠ Enter a command or pick a quick command first."
+                elif not coordinator:
+                    self._test_results = "✗ Coordinator not available."
+                else:
+                    try:
+                        reply = await coordinator.async_handle_voice(command_text)
+                        self._test_results = f'🗣 "{command_text}"\n→ {reply or "(no speech reply — check the TV/Now Playing sensor)"}'
+                    except Exception as exc:
+                        self._test_results = f"✗ Error: {exc}"
+            elif not query:
                 self._test_results = "⚠ Enter a query first."
             elif not coordinator or not coordinator.jellyfin_client:
                 self._test_results = "✗ Jellyfin client not available."
@@ -658,18 +671,40 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
+                    vol.Optional("preset"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                {"value": "custom", "label": "— Custom (type above) —"},
+                                {"value": "open jellyfin", "label": "open jellyfin"},
+                                {"value": "what's playing", "label": "what's playing"},
+                                {"value": "resume", "label": "resume"},
+                                {"value": "pause", "label": "pause"},
+                                {"value": "stop", "label": "stop"},
+                                {"value": "up", "label": "up"},
+                                {"value": "down", "label": "down"},
+                                {"value": "left", "label": "left"},
+                                {"value": "right", "label": "right"},
+                                {"value": "select", "label": "select"},
+                                {"value": "go back", "label": "go back"},
+                                {"value": "navigation mode", "label": "navigation mode (activate)"},
+                                {"value": "exit navigation mode", "label": "exit navigation mode"},
+                            ],
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
                     vol.Required("action"): selector.SelectSelector(
                         selector.SelectSelectorConfig(
                             options=[
                                 {"value": "search", "label": "Search"},
                                 {"value": "play", "label": "Play first result"},
+                                {"value": "command", "label": "Test voice command (full pipeline)"},
                                 {"value": "close", "label": "Close"},
                             ],
                             mode=selector.SelectSelectorMode.LIST,
                         )
                     ),
                 }),
-                {"type_filter": "all", "action": "search"},
+                {"type_filter": "all", "preset": "custom", "action": "search"},
             ),
             description_placeholders={"results": self._test_results},
         )

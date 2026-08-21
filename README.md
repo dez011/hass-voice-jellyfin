@@ -21,7 +21,8 @@ Say natural language commands to search, play, resume, and navigate your media �
 - **Multiple AI Backends** — Ollama (local/private), OpenAI, Anthropic, Google Gemini, OpenRouter, or HA Conversation
 - **Android TV / ADB Control** — Send key events, launch apps, deep-link to specific Jellyfin items
 - **15 HA Services** — Automate from scripts, blueprints, or voice satellites; `voice_command` bridges Assist/STT into the pipeline
-- **Custom Lovelace Card** — Live status dashboard with command history
+- **Custom Lovelace Card** — Live status dashboard with command history, plus tappable D-pad/back/Open-Jellyfin buttons and a text box to test commands without speaking
+- **No-Mic Testing** — Options → Voice Command Tester and the Lovelace card both let you type or tap commands through the real pipeline, no microphone required
 - **Conversation Context** — The AI remembers up to 10 turns for follow-up commands
 
 ---
@@ -146,7 +147,7 @@ type: custom:voice-jellyfin-card
 title: Voice Jellyfin
 ```
 
-Shows: navigation mode status indicator, AI provider, connected device, last 5 commands, and a live voice-activity indicator.
+Shows: navigation mode status indicator, AI provider, connected device, last 5 commands, live voice-activity indicator, and Test Controls — D-pad, Back, Open Jellyfin, and a free-text command box that runs through the real pipeline and shows the spoken reply. Set `show_controls: false` to hide the test controls.
 
 See [docs/installation.md](docs/installation.md) for the resource URL setup.
 

@@ -169,6 +169,41 @@ lose the fancy free-form phrasing until it's back.
 
 ---
 
+## Testing without a microphone
+
+You don't need to speak anything to try this out. Two places in the UI
+exercise the exact same pipeline real speech goes through:
+
+**The Lovelace card** (`type: custom:voice-jellyfin-card`) has a "Test
+Controls" section:
+
+- **D-pad + Back** — up/down/left/right/select and back buttons call
+  `voice_jellyfin.navigate` directly, the same as Navigation Mode key
+  presses
+- **Open Jellyfin** — a one-tap way to confirm your **Jellyfin App
+  Package** setting actually launches the client you installed (Astra,
+  Findroid, the official app, etc.)
+- **Text box + Send** — type anything you'd say out loud ("play the dark
+  knight", "pause", "what's playing", "navigation mode") and it's routed
+  through `voice_jellyfin.voice_command` — the same wake-phrase / nav-mode
+  / AI-or-rule-based pipeline a real utterance takes. The spoken reply
+  shows up right under the box.
+
+Set `show_controls: false` in the card's YAML config to hide this section
+on a dashboard you don't want cluttered.
+
+**Options → Voice Command Tester** (Settings → Devices & Services → Voice
+Jellyfin → Configure → Test) has the same "Test voice command" action —
+type free text or pick a **Quick command** preset (open jellyfin, pause,
+up/down/left/right, navigation mode, etc.) and it runs through the full
+pipeline too. The original Search/Play actions are still there for
+checking Jellyfin search results directly.
+
+Both are handy for confirming a **Jellyfin Device Name** filter, an app
+package, or a phrase works before wiring up an actual voice source.
+
+---
+
 ## 6. Troubleshooting
 
 | Symptom | Check |
@@ -179,4 +214,5 @@ lose the fancy free-form phrasing until it's back.
 | Commands affect the wrong TV | Set a distinct **Jellyfin Device Name** on each entry — see [configuration.md](configuration.md#multiple-tvs--multiple-users) |
 | "open jellyfin" opens the wrong (or no) app | Set **Jellyfin App Package** in Options → TV Device to match the client actually installed (Astra, Findroid, etc.) |
 | Voice does nothing | Confirm the bridge automation calls `voice_jellyfin.voice_command` and check Settings → Devices → Voice Jellyfin sensors |
+| Not sure what to say, or don't have a mic handy | Use the Lovelace card's Test Controls or Options → Voice Command Tester → Test voice command — see [Testing without a microphone](#testing-without-a-microphone) above |
 | AI replies are odd | Turn AI off in Options — everything above still works rule-based |
