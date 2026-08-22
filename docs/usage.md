@@ -171,8 +171,58 @@ lose the fancy free-form phrasing until it's back.
 
 ## Testing without a microphone
 
-You don't need to speak anything to try this out. Two places in the UI
-exercise the exact same pipeline real speech goes through:
+You don't need to speak anything to try this out. The sensors this
+integration creates are read-only — there are no buttons on them — so
+commands are run from one of the three places below.
+
+### Fastest: Developer Tools → Actions
+
+Zero setup, works the moment the integration loads. Go to **Developer
+Tools → Actions**, switch to YAML mode with the toggle on the right, and
+paste:
+
+```yaml
+action: voice_jellyfin.voice_command
+data:
+  text: open jellyfin
+```
+
+Press **Perform action**. Because `voice_command` returns a response,
+the spoken reply appears right below the button. Swap the text for
+anything you'd say out loud:
+
+```yaml
+action: voice_jellyfin.voice_command
+data:
+  text: search for batman
+```
+
+Individual services work too, if you want to skip the language parsing:
+
+```yaml
+action: voice_jellyfin.navigate      # up/down/left/right/select/back/home
+data:
+  direction: down
+```
+
+```yaml
+action: voice_jellyfin.play
+data:
+  query: the dark knight
+```
+
+### Options flow
+
+**Settings → Devices & Services → Voice Jellyfin → Configure → Test
+Commands**. Type free text or pick from the **Quick command** dropdown
+(open jellyfin, pause, up/down/left/right, navigation mode, …), choose
+**Test voice command**, and the reply is shown in the form. Handy when
+you don't remember the exact phrasing.
+
+### The dashboard card
+
+Two places in the UI exercise the exact same pipeline real speech goes
+through:
 
 **The Lovelace card** (`type: custom:voice-jellyfin-card`) has a "Test
 Controls" section:

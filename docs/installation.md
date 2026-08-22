@@ -50,19 +50,29 @@ After restarting:
 
 ## Lovelace Card
 
-To add the dashboard card, include the JS resource in your Lovelace configuration:
+**No resource setup needed.** The integration serves the card itself and
+registers it with the frontend on startup — just add it to a dashboard:
 
-```yaml
-# configuration.yaml or via UI (Settings → Dashboards → Resources)
-lovelace:
-  resources:
-    - url: /local/voice-jellyfin-card.js
-      type: module
-```
+1. Open any dashboard → ✏️ Edit → **+ Add Card**
+2. Search for **Voice Jellyfin Card** (or pick *Manual* and paste the YAML below)
+
+If the card doesn't appear in the picker, hard-reload the browser
+(Ctrl/Cmd + Shift + R) — the frontend caches its card list.
+
+<details>
+<summary>Manual resource registration (only if auto-loading fails)</summary>
 
 Copy `custom_components/voice_jellyfin/lovelace/voice-jellyfin-card.js` to your
-`config/www/` directory (rename to `voice-jellyfin-card.js`), then add the card to
-a dashboard:
+`config/www/` directory, then add under Settings → Dashboards → ⋮ → Resources:
+
+```yaml
+url: /local/voice-jellyfin-card.js
+type: module
+```
+
+</details>
+
+Card configuration:
 
 ```yaml
 type: custom:voice-jellyfin-card

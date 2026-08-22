@@ -31,6 +31,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from .services import async_register_services
     async_register_services(hass)
 
+    from .frontend import async_register_frontend
+    await async_register_frontend(hass)
+
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 
