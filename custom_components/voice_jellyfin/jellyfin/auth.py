@@ -7,10 +7,11 @@ from typing import Optional
 
 import aiohttp
 
+from ..const import VERSION as _CLIENT_VERSION
+
 _LOGGER = logging.getLogger(__name__)
 
 _CLIENT_NAME = "VoiceJellyfin"
-_CLIENT_VERSION = "0.1.0"
 _DEVICE_NAME = "HomeAssistant"
 _DEVICE_ID = "voice_jellyfin_ha"
 

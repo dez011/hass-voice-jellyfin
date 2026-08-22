@@ -1,7 +1,7 @@
 {
   "domain": "voice_jellyfin",
   "name": "Voice Jellyfin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "documentation": "https://github.com/dez011/hacs-voice-jellyfin",
   "issue_tracker": "https://github.com/dez011/hacs-voice-jellyfin/issues",
   "requirements": [],
