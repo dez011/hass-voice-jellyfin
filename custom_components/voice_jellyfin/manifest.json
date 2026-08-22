@@ -1,13 +1,18 @@
 {
   "domain": "voice_jellyfin",
   "name": "Voice Jellyfin",
-  "codeowners": ["@dez011"],
+  "codeowners": [
+    "@dez011"
+  ],
   "config_flow": true,
-  "dependencies": ["http", "frontend"],
+  "dependencies": [
+    "http",
+    "frontend"
+  ],
   "documentation": "https://github.com/dez011/hacs-voice-jellyfin",
   "integration_type": "service",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/dez011/hacs-voice-jellyfin/issues",
   "requirements": [],
-  "version": "0.3.0"
+  "version": "0.3.1"
 }
