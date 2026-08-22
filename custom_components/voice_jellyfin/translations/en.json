@@ -12,7 +12,7 @@
           "test_connection": "Test connection only (don't continue)"
         },
         "data_description": {
-          "jellyfin_url": "Full URL including port — e.g. http://192.168.1.10:8096 or https://jellyfin.yourdomain.com",
+          "jellyfin_url": "Full URL including port — for example your server's LAN address on port 8096, or your reverse-proxy hostname.",
           "jellyfin_api_key": "Create one in Jellyfin → Dashboard → API Keys. Do not use your login password.",
           "jellyfin_username": "Optional — informational only; the next step lets you pick your actual user from a list.",
           "jellyfin_verify_ssl": "Disable if using a self-signed certificate (e.g. Tailscale or local HTTPS).",
@@ -22,7 +22,9 @@
       "jellyfin_user": {
         "title": "Which Jellyfin User?",
         "description": "Pick the Jellyfin user this entry acts as — used for resume, favorites, and watch history. If you're setting up a second TV for someone else on the same server, pick their profile here, not yours.",
-        "data": { "jellyfin_default_user": "Jellyfin User" },
+        "data": {
+          "jellyfin_default_user": "Jellyfin User"
+        },
         "data_description": {
           "jellyfin_default_user": "Auto-detect picks whichever user Jellyfin reports first — fine for a single-user server, ambiguous once more than one person watches."
         }
@@ -30,7 +32,9 @@
       "tv_device": {
         "title": "TV / Playback Device",
         "description": "Choose the device Voice Jellyfin will control for navigation and remote keys. Select **None** if you only want voice search and playback without remote control.",
-        "data": { "tv_type": "Device Type" },
+        "data": {
+          "tv_type": "Device Type"
+        },
         "data_description": {
           "tv_type": "Android TV / Fire TV uses the androidtv HA integration. Apple TV uses the Apple TV HA integration. None = voice commands only, no remote keys."
         }
@@ -72,7 +76,9 @@
       "ai_provider": {
         "title": "AI Provider",
         "description": "Choose the AI brain that interprets your voice commands into actions.\n\n- **Home Assistant Conversation** — free, uses your existing HA AI setup\n- **Ollama** — free, runs locally on your machine (private, no internet)\n- **OpenAI / Anthropic / Gemini** — cloud, most accurate, requires API key\n- **OpenAI-Compatible** — any local server (LM Studio, vLLM, Ollama OpenAI mode)\n- **None** — rule-based only, works for simple commands without AI",
-        "data": { "ai_provider": "Provider" }
+        "data": {
+          "ai_provider": "Provider"
+        }
       },
       "cloud_provider": {
         "title": "Cloud AI Credentials",
@@ -112,7 +118,7 @@
       },
       "ollama_model": {
         "title": "Ollama — Model & Settings",
-        "description": "Select the model to use for voice commands. **llama3** or **mistral** work well. Pull models with `ollama pull <model>` before selecting.",
+        "description": "Select the model to use for voice commands. llama3 or mistral work well. Pull models first with the ollama pull command.",
         "data": {
           "ollama_model": "Model",
           "ollama_context_size": "Context Window",
@@ -139,7 +145,7 @@
           "ai_timeout": "Timeout (seconds)"
         },
         "data_description": {
-          "ai_base_url": "Full URL to the API root — e.g. http://192.168.1.50:1234/v1 for LM Studio.",
+          "ai_base_url": "Full URL to the API root, including the /v1 suffix — for example your LM Studio host and port followed by /v1.",
           "ai_api_key": "Enter any non-empty string if the server doesn't require auth (e.g. 'not-needed').",
           "ai_model": "Model identifier as the server expects it — e.g. mistral or llama-3-8b-instruct.",
           "ai_streaming": "Stream the response. Disable if your server has issues with streaming.",
@@ -190,7 +196,9 @@
       "init": {
         "title": "Voice Jellyfin Settings",
         "description": "Choose which section to update.",
-        "data": { "section": "Section" }
+        "data": {
+          "section": "Section"
+        }
       },
       "jellyfin": {
         "title": "Jellyfin Connection",
@@ -203,7 +211,7 @@
           "catalog_reindex_interval": "Auto re-index schedule"
         },
         "data_description": {
-          "jellyfin_url": "Full URL including port — e.g. http://192.168.1.10:8096",
+          "jellyfin_url": "Full URL including port, including the http or https prefix.",
           "jellyfin_api_key": "Found in Jellyfin → Dashboard → API Keys.",
           "jellyfin_verify_ssl": "Disable for self-signed certs (Tailscale, local HTTPS).",
           "test_connection": "Verify credentials without saving. The page reloads with the result.",
@@ -213,7 +221,9 @@
       "jellyfin_user": {
         "title": "Which Jellyfin User?",
         "description": "Change which Jellyfin user this entry acts as — used for resume, favorites, and watch history.",
-        "data": { "jellyfin_default_user": "Jellyfin User" },
+        "data": {
+          "jellyfin_default_user": "Jellyfin User"
+        },
         "data_description": {
           "jellyfin_default_user": "Auto-detect picks whichever user Jellyfin reports first — fine for a single-user server, ambiguous once more than one person watches."
         }
@@ -295,7 +305,7 @@
           "ai_timeout": "Timeout (seconds)"
         },
         "data_description": {
-          "ai_base_url": "e.g. http://192.168.1.50:1234/v1 for LM Studio.",
+          "ai_base_url": "Full URL to the API root, including the /v1 suffix — for example your LM Studio host and port followed by /v1.",
           "ai_api_key": "Use any non-empty string if auth is not required.",
           "ai_model": "Exact model name the server expects.",
           "ai_streaming": "Disable if the server has streaming issues.",
@@ -305,7 +315,9 @@
       "tv": {
         "title": "TV Device Type",
         "description": "Change the type of device used for remote control and navigation.",
-        "data": { "tv_type": "Device Type" },
+        "data": {
+          "tv_type": "Device Type"
+        },
         "data_description": {
           "tv_type": "Changing this will require selecting a new entity on the next screen."
         }
