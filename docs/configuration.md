@@ -25,12 +25,21 @@ Choose how your Jellyfin server and Home Assistant are connected:
 |-------|-------------|
 | **Jellyfin URL** | Full URL including port, e.g. `http://192.168.1.50:8096` |
 | **API Key** | Generate one in Jellyfin → Dashboard → API Keys |
-| **Username** *(optional)* | Used for username/password auth instead of API key |
-| **Default User ID** *(optional)* | Used for resume/favorites calls |
+| **Username** *(optional)* | Informational only — the next step lets you pick your real user from a list |
 
 The integration tests connectivity immediately.  If it cannot reach the server you will see a "Cannot connect" error — check the URL and that Jellyfin is running.
 
+One server URL can only be set up once — adding the same server a second time (e.g. by mistake) is blocked, since every service call fans out to *all* configured entries and a duplicate would fire every command twice.
+
 *Screenshot placeholder: Jellyfin connection step*
+
+---
+
+## Step 2b — Which Jellyfin User?
+
+Once connected, the wizard fetches your server's user list and asks which one this entry acts as — for resume, favorites, and watch history, which Jellyfin scopes per-user. Pick **Auto-detect** on a single-user server, or your own profile if the server has more than one account (e.g. you're setting up a second TV for your brother — pick *his* profile when configuring *his* TV).
+
+*Screenshot placeholder: user picker*
 
 ---
 
@@ -38,10 +47,12 @@ The integration tests connectivity immediately.  If it cannot reach the server y
 
 | Field | Description |
 |-------|-------------|
-| **Media Player Entity** | Select the `media_player.*` entity for your TV |
-| **ADB Host** *(optional)* | Direct ADB TCP host if you need raw ADB commands |
+| **Media Player Entity** | Select the `media_player.*` entity for your TV (needs the `androidtv` integration set up first) |
+| **ADB Host** *(optional)* | Direct ADB TCP host — used automatically if no Media Player Entity is selected, so Fire TV/Android TV control works even without the `androidtv` HA integration |
 | **ADB Port** | Default `5555` |
 | **Enable Wake-on-Command** | Wake the screen before sending key events |
+| **Jellyfin App Package** | Android package "open Jellyfin" launches. Default `org.jellyfin.androidtv` (the official app). Using Astra, Findroid, or another client instead? Find its package name via `adb shell pm list packages \| grep -i jellyfin` (or the client's name) and paste it here. |
+| **Jellyfin Device Name** *(optional)* | **Only needed with more than one TV/person on the same Jellyfin server.** Matches this TV's Jellyfin session by device name (Jellyfin Dashboard → Devices) or client app name (e.g. `Astra`). Leave blank on a single-TV setup — commands then just act on whichever session is active. See [Multiple TVs / Multiple Users](#multiple-tvs--multiple-users) below. |
 
 Leave all fields blank to skip TV control (voice commands will only affect Jellyfin playback).
 
@@ -112,7 +123,31 @@ This enables users with motor disabilities to activate Navigation Mode with a si
 
 After initial setup, go to **Settings → Devices & Services → Voice Jellyfin → Configure** to adjust:
 
-- Navigation timeout
-- Wake phrase
-- Spoken confirmation
+- Jellyfin connection, and which Jellyfin user this entry acts as
+- AI provider and settings
+- TV device, ADB host, the Jellyfin app package, and the Jellyfin device name filter
+- Navigation timeout, wake phrase, spoken confirmation, hot mic phrase
 - Accessibility button entity
+- Re-index the media catalog, or run a search/playback test against this entry's server and TV
+- **Voice Command Tester** — search/play Jellyfin lookups directly, or pick "Test voice command" (free text or a Quick command preset) to run text through the exact same pipeline real speech uses, without a microphone. See [Testing without a microphone](usage.md#testing-without-a-microphone).
+
+Each entry's options are independent — reconfiguring one TV's device name filter or user doesn't touch any other entry.
+
+---
+
+## Multiple TVs / Multiple Users
+
+Voice Jellyfin has no built-in concept of "rooms" — instead, **add the integration once per TV**. Each config entry is independent, with its own TV controller, its own Jellyfin user, and (once set) its own device name filter. Two entries pointed at the same Jellyfin server never conflict.
+
+**Setup for a second TV (e.g. your brother's Fire TV with a different Jellyfin client):**
+
+1. Settings → Devices & Services → **Add Integration** → Voice Jellyfin again
+2. Same Jellyfin URL and API key as your first entry
+3. On the user picker, choose *his* Jellyfin profile — not yours
+4. Pick his Fire TV's `media_player` entity (or ADB host)
+5. Set **Jellyfin App Package** if he's using a different client (Astra, Findroid, etc.) than the official app
+6. Set **Jellyfin Device Name** to something that matches how his TV shows up in Jellyfin — check Jellyfin Dashboard → Devices for the exact device name, or ask "what's playing" once his TV is open in Jellyfin and read the `device`/`client` attributes off the **Now Playing** sensor
+
+Once both entries have a device name set, commands sent through each entry's `voice_jellyfin.voice_command` (or its dedicated Assist automation) only ever touch its own TV's session — "pause" on your device never pauses his show, and vice versa. Without a device name set (the default, single-TV behavior), a command acts on whichever Jellyfin session happens to be active.
+
+The **Now Playing** sensor (`sensor.voice_jellyfin_now_playing`, one per entry) shows the title, client app, device name, user, and paused state of what that entry currently sees — the fastest way to confirm a device name filter is matching the right session.

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, VERSION
 from .coordinator import VoiceJellyfinCoordinator
 
 
@@ -20,5 +20,5 @@ class VoiceJellyfinEntity(CoordinatorEntity[VoiceJellyfinCoordinator]):
             "name": "Voice Jellyfin",
             "manufacturer": "voice_jellyfin",
             "model": "HACS Integration",
-            "sw_version": coordinator.entry.data.get("version", "0.1.0"),
+            "sw_version": coordinator.entry.data.get("version", VERSION),
         }

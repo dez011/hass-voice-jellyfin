@@ -55,19 +55,60 @@ async def test_step_jellyfin_connection_error(flow):
 
 
 @pytest.mark.asyncio
-async def test_step_jellyfin_success_advances_to_tv_device(flow):
-    """A valid Jellyfin connection should advance to the TV device chooser."""
-    flow.async_step_tv_device = AsyncMock(return_value={"type": "form", "step_id": "tv_device"})
+async def test_step_jellyfin_success_advances_to_jellyfin_user(flow):
+    """A valid Jellyfin connection should advance to the user picker (which
+    fetched /Users during the connection) before the TV device chooser."""
+    flow.async_step_jellyfin_user = AsyncMock(return_value={"type": "form", "step_id": "jellyfin_user"})
     with patch(
         "custom_components.voice_jellyfin.jellyfin.client.JellyfinClient"
     ) as MockClient:
         MockClient.return_value.async_connect = AsyncMock(return_value={"Version": "10.9"})
         MockClient.return_value.async_close = AsyncMock()
+        MockClient.return_value.async_get_users = AsyncMock(
+            return_value=[{"id": "u1", "name": "Miguel"}]
+        )
         result = await flow.async_step_jellyfin(
             {"jellyfin_url": "http://localhost:8096", "jellyfin_api_key": "abc"}
         )
+    flow.async_step_jellyfin_user.assert_called_once()
+    assert result["step_id"] == "jellyfin_user"
+    assert flow._data["_jellyfin_users"] == [{"id": "u1", "name": "Miguel"}]
+
+
+@pytest.mark.asyncio
+async def test_step_jellyfin_user_list_failure_does_not_block_setup(flow):
+    """If /Users can't be listed, setup still proceeds with just Auto-detect."""
+    flow.async_step_jellyfin_user = AsyncMock(return_value={"type": "form", "step_id": "jellyfin_user"})
+    with patch(
+        "custom_components.voice_jellyfin.jellyfin.client.JellyfinClient"
+    ) as MockClient:
+        MockClient.return_value.async_connect = AsyncMock(return_value={"Version": "10.9"})
+        MockClient.return_value.async_close = AsyncMock()
+        MockClient.return_value.async_get_users = AsyncMock(side_effect=Exception("403"))
+        result = await flow.async_step_jellyfin(
+            {"jellyfin_url": "http://localhost:8096", "jellyfin_api_key": "abc"}
+        )
+    assert result["step_id"] == "jellyfin_user"
+    assert flow._data["_jellyfin_users"] == []
+
+
+@pytest.mark.asyncio
+async def test_step_jellyfin_user_picks_default_user_and_advances(flow):
+    flow.async_step_tv_device = AsyncMock(return_value={"type": "form", "step_id": "tv_device"})
+    flow._data["_jellyfin_users"] = [{"id": "u1", "name": "Miguel"}]
+    result = await flow.async_step_jellyfin_user({"jellyfin_default_user": "u1"})
     flow.async_step_tv_device.assert_called_once()
     assert result["step_id"] == "tv_device"
+    assert flow._data["jellyfin_default_user"] == "u1"
+    assert "_jellyfin_users" not in flow._data
+
+
+@pytest.mark.asyncio
+async def test_step_jellyfin_user_shows_auto_detect_option(flow):
+    flow._data["_jellyfin_users"] = [{"id": "u1", "name": "Miguel"}, {"id": "u2", "name": "Brother"}]
+    result = await flow.async_step_jellyfin_user()
+    assert result["type"] == "form"
+    assert result["step_id"] == "jellyfin_user"
 
 
 @pytest.mark.asyncio
@@ -182,3 +223,174 @@ async def test_full_flow_creates_entry(flow):
         {"button_entity": "input_button.btn", "button_trigger": "state_changed"}
     )
     flow.async_create_entry.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: AI enablement, duplicate guard, options-flow saving
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_choosing_ai_provider_enables_ai(flow):
+    """Regression: entries created by the wizard never set ai_enabled, so
+    every voice command silently fell back to rule-based intents."""
+    flow.async_step_cloud_provider = AsyncMock(return_value={"type": "form"})
+    await flow.async_step_ai_provider({"ai_provider": "openai"})
+    assert flow._data["ai_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_jellyfin_step_sets_unique_id(flow):
+    """The server URL becomes the unique id so a server can't be added twice."""
+    flow.async_step_tv_device = AsyncMock(return_value={"type": "form"})
+    with patch(
+        "custom_components.voice_jellyfin.jellyfin.client.JellyfinClient"
+    ) as MockClient:
+        MockClient.return_value.async_connect = AsyncMock(return_value={"Version": "10.9"})
+        MockClient.return_value.async_close = AsyncMock()
+        await flow.async_step_jellyfin(
+            {"jellyfin_url": "http://MyServer:8096/", "jellyfin_api_key": "abc"}
+        )
+    assert flow.unique_id == "http://myserver:8096"
+
+
+def _make_options_flow(entry_data=None, entry_options=None, hass=None):
+    from custom_components.voice_jellyfin.config_flow import VoiceJellyfinOptionsFlow
+
+    entry = MagicMock()
+    entry.entry_id = "entry-1"
+    entry.data = entry_data or {"jellyfin_url": "http://x", "jellyfin_api_key": "SECRET"}
+    entry.options = entry_options or {}
+    oflow = VoiceJellyfinOptionsFlow(entry)
+    oflow.hass = hass or MagicMock()
+    oflow.async_show_form = MagicMock(side_effect=lambda **kw: {"type": "form", **kw})
+    captured = {}
+
+    def _create_entry(title="", data=None):
+        captured["data"] = data
+        return {"type": "create_entry", "data": data}
+
+    oflow.async_create_entry = MagicMock(side_effect=_create_entry)
+    return oflow, captured
+
+
+@pytest.mark.asyncio
+async def test_options_save_does_not_clone_entry_data():
+    """Regression: every options save copied ALL of entry.data (including
+    the Jellyfin API key) into entry.options, permanently shadowing data."""
+    oflow, captured = _make_options_flow()
+    await oflow.async_step_nav({"nav_timeout": "30"})
+    assert captured["data"] == {"nav_timeout": "30"}
+    assert "jellyfin_api_key" not in captured["data"]
+
+
+@pytest.mark.asyncio
+async def test_options_save_preserves_existing_options():
+    oflow, captured = _make_options_flow(entry_options={"ai_enabled": True})
+    await oflow.async_step_nav({"nav_timeout": "30"})
+    assert captured["data"] == {"ai_enabled": True, "nav_timeout": "30"}
+
+
+@pytest.mark.asyncio
+async def test_options_ai_disabled_short_circuits():
+    oflow, captured = _make_options_flow()
+    await oflow.async_step_ai_provider({"ai_enabled": False, "ai_provider": "openai"})
+    assert captured["data"]["ai_enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# Voice Command Tester step — no-microphone command testing
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_tester_command_action_routes_through_full_pipeline():
+    """The 'command' action should hit coordinator.async_handle_voice (the
+    same entry point real speech goes through), not the narrow search-only
+    path used by the 'search'/'play' actions."""
+    from custom_components.voice_jellyfin.const import DOMAIN
+
+    oflow, _ = _make_options_flow()
+    coordinator = MagicMock()
+    coordinator.async_handle_voice = AsyncMock(return_value="Navigation mode on.")
+    oflow.hass.data = {DOMAIN: {"entry-1": coordinator}}
+
+    await oflow.async_step_test(
+        {"action": "command", "query": "navigation mode", "preset": "custom"}
+    )
+
+    coordinator.async_handle_voice.assert_awaited_once_with("navigation mode")
+    assert "Navigation mode on." in oflow._test_results
+
+
+@pytest.mark.asyncio
+async def test_tester_command_action_uses_preset_over_query():
+    """Picking a quick-command preset should win over stale/free text left
+    in the query box — the whole point of the command-builder dropdown."""
+    from custom_components.voice_jellyfin.const import DOMAIN
+
+    oflow, _ = _make_options_flow()
+    coordinator = MagicMock()
+    coordinator.async_handle_voice = AsyncMock(return_value="")
+    oflow.hass.data = {DOMAIN: {"entry-1": coordinator}}
+
+    await oflow.async_step_test(
+        {"action": "command", "query": "ignored leftover text", "preset": "open jellyfin"}
+    )
+
+    coordinator.async_handle_voice.assert_awaited_once_with("open jellyfin")
+
+
+@pytest.mark.asyncio
+async def test_tester_command_action_requires_text():
+    oflow, _ = _make_options_flow()
+    await oflow.async_step_test({"action": "command", "query": "", "preset": "custom"})
+    assert "Enter a command" in oflow._test_results
+
+
+@pytest.mark.asyncio
+async def test_tester_command_action_no_coordinator():
+    from custom_components.voice_jellyfin.const import DOMAIN
+
+    oflow, _ = _make_options_flow()
+    oflow.hass.data = {DOMAIN: {}}
+
+    await oflow.async_step_test(
+        {"action": "command", "query": "open jellyfin", "preset": "custom"}
+    )
+
+    assert "Coordinator not available" in oflow._test_results
+
+
+@pytest.mark.asyncio
+async def test_tester_command_action_reports_pipeline_error():
+    from custom_components.voice_jellyfin.const import DOMAIN
+
+    oflow, _ = _make_options_flow()
+    coordinator = MagicMock()
+    coordinator.async_handle_voice = AsyncMock(side_effect=RuntimeError("boom"))
+    oflow.hass.data = {DOMAIN: {"entry-1": coordinator}}
+
+    await oflow.async_step_test(
+        {"action": "command", "query": "play the dark knight", "preset": "custom"}
+    )
+
+    assert "boom" in oflow._test_results
+
+
+@pytest.mark.asyncio
+async def test_tester_search_action_unaffected_by_preset_field():
+    """Adding the preset dropdown must not change existing search behaviour
+    when a real search/play action is selected."""
+    from custom_components.voice_jellyfin.const import DOMAIN
+
+    oflow, _ = _make_options_flow()
+    coordinator = MagicMock()
+    coordinator.jellyfin_client = MagicMock()
+    coordinator.jellyfin_client.async_search = AsyncMock(return_value=[])
+    oflow.hass.data = {DOMAIN: {"entry-1": coordinator}}
+
+    await oflow.async_step_test(
+        {"action": "search", "query": "batman", "preset": "custom", "type_filter": "all"}
+    )
+
+    coordinator.jellyfin_client.async_search.assert_awaited_once()
+    assert 'No results for "batman"' in oflow._test_results

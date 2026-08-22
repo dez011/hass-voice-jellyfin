@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "voice_jellyfin"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # Config entry keys
 CONF_JELLYFIN_URL = "jellyfin_url"
@@ -12,6 +12,10 @@ CONF_JELLYFIN_PASSWORD = "jellyfin_password"
 CONF_JELLYFIN_DEFAULT_USER = "jellyfin_default_user"
 CONF_JELLYFIN_LIBRARIES = "jellyfin_libraries"
 CONF_JELLYFIN_VERIFY_SSL = "jellyfin_verify_ssl"
+# Substring matched against a Jellyfin session's DeviceName/Client to target
+# THIS entry's TV specifically — needed once more than one person/device
+# shares the same Jellyfin server. Blank = control whichever session is active.
+CONF_JELLYFIN_TARGET_DEVICE = "jellyfin_target_device"
 
 CONF_TV_TYPE = "tv_type"
 CONF_ANDROID_TV_ENTITY = "android_tv_entity"
@@ -128,6 +132,7 @@ CATALOG_REINDEX_OPTIONS = {
 }
 
 # Services
+SERVICE_VOICE_COMMAND = "voice_command"
 SERVICE_REINDEX_CATALOG = "reindex_catalog"
 SERVICE_PLAY = "play"
 SERVICE_SEARCH = "search"

@@ -23,6 +23,9 @@ class AIContext:
         self.current_library: Optional[str] = None
         self.current_filter: dict[str, Any] = {}
         self.last_action: Optional[str] = None
+        # Media items offered to the user when a play query was ambiguous;
+        # the next command may pick one ("the first one", "batman begins")
+        self.pending_choices: list[Any] = []
 
     # ------------------------------------------------------------------
     # Turn management
@@ -50,3 +53,4 @@ class AIContext:
         self.current_library = None
         self.current_filter = {}
         self.last_action = None
+        self.pending_choices = []

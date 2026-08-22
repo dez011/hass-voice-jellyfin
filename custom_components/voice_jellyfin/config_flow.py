@@ -22,6 +22,7 @@ from .const import (
     CONF_JELLYFIN_API_KEY,
     CONF_JELLYFIN_USERNAME,
     CONF_JELLYFIN_DEFAULT_USER,
+    CONF_JELLYFIN_TARGET_DEVICE,
     CONF_JELLYFIN_VERIFY_SSL,
     CONF_TV_TYPE,
     CONF_ANDROID_TV_ENTITY,
@@ -29,6 +30,8 @@ from .const import (
     CONF_ADB_HOST,
     CONF_ADB_PORT,
     CONF_TV_WAKE_SUPPORT,
+    CONF_PREFERRED_CLIENT_PACKAGE,
+    DEFAULT_PREFERRED_CLIENT_PACKAGE,
     TV_TYPE_NONE,
     TV_TYPE_ANDROID,
     TV_TYPE_APPLE,
@@ -71,6 +74,28 @@ from .const import (
 _LOGGER = logging.getLogger(LOGGER_NAME)
 
 
+def _user_select(users: list[dict[str, str]]) -> selector.SelectSelector:
+    """Build the Jellyfin-user dropdown from a /Users listing.
+
+    Always offers "Auto-detect" first; falls back to that alone if the
+    listing failed or the API key can't see any users — never blocks setup.
+    custom_value lets a stale saved ID that's no longer in the list still
+    render instead of erroring the form.
+    """
+    options = [{"value": "", "label": "Auto-detect (first user found)"}] + [
+        {"value": u["id"], "label": u["name"] or u["id"]}
+        for u in users
+        if u.get("id")
+    ]
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=options,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+            custom_value=True,
+        )
+    )
+
+
 class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the multi-step config flow."""
 
@@ -103,12 +128,22 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 client = JellyfinClient(auth, verify_ssl=user_input.get(CONF_JELLYFIN_VERIFY_SSL, True), hass=self.hass)
                 await client.async_connect()
-                await client.async_close()
                 if test_only:
+                    await client.async_close()
                     errors["base"] = "connection_ok"
                 else:
+                    # One entry per server — a duplicate would make every
+                    # service call fire twice.
+                    await self.async_set_unique_id(user_input[CONF_JELLYFIN_URL].rstrip("/").lower())
+                    self._abort_if_unique_id_configured()
                     self._data.update(user_input)
-                    return await self.async_step_tv_device()
+                    try:
+                        self._data["_jellyfin_users"] = await client.async_get_users()
+                    except Exception as exc:
+                        _LOGGER.debug("Could not list Jellyfin users: %s", exc)
+                        self._data["_jellyfin_users"] = []
+                    await client.async_close()
+                    return await self.async_step_jellyfin_user()
             except PermissionError as exc:
                 errors["base"] = "invalid_auth"
                 description_placeholders["status"] = f"\n\n{exc}"
@@ -120,7 +155,6 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_JELLYFIN_URL, default="http://localhost:8096"): str,
             vol.Optional(CONF_JELLYFIN_API_KEY): str,
             vol.Optional(CONF_JELLYFIN_USERNAME): str,
-            vol.Optional(CONF_JELLYFIN_DEFAULT_USER): str,
             vol.Optional(CONF_JELLYFIN_VERIFY_SSL, default=True): bool,
             vol.Optional("test_connection", default=False): bool,
         })
@@ -130,6 +164,29 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=self.add_suggested_values_to_schema(_schema, last_input),
             errors=errors,
             description_placeholders={"status": description_placeholders.get("status", "")},
+        )
+
+    async def async_step_jellyfin_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 2: Pick which Jellyfin user this entry acts as.
+
+        Used for resume, favorites, and watch history — the things Jellyfin
+        scopes per-user. A real picker fed from /Users instead of asking for
+        a raw GUID.
+        """
+        if user_input is not None:
+            self._data[CONF_JELLYFIN_DEFAULT_USER] = user_input.get(CONF_JELLYFIN_DEFAULT_USER, "")
+            self._data.pop("_jellyfin_users", None)
+            return await self.async_step_tv_device()
+
+        return self.async_show_form(
+            step_id="jellyfin_user",
+            data_schema=vol.Schema({
+                vol.Optional(CONF_JELLYFIN_DEFAULT_USER, default=""): _user_select(
+                    self._data.get("_jellyfin_users", [])
+                ),
+            }),
         )
 
     async def async_step_tv_device(
@@ -176,6 +233,7 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.EntitySelectorConfig(domain="remote")
                 ),
                 vol.Optional(CONF_TV_WAKE_SUPPORT, default=True): bool,
+                vol.Optional(CONF_JELLYFIN_TARGET_DEVICE): str,
             }),
         )
 
@@ -196,6 +254,8 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_ADB_HOST): str,
                 vol.Optional(CONF_ADB_PORT, default=5555): int,
                 vol.Optional(CONF_TV_WAKE_SUPPORT, default=True): bool,
+                vol.Optional(CONF_PREFERRED_CLIENT_PACKAGE, default=DEFAULT_PREFERRED_CLIENT_PACKAGE): str,
+                vol.Optional(CONF_JELLYFIN_TARGET_DEVICE): str,
             }),
         )
 
@@ -205,6 +265,10 @@ class VoiceJellyfinConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Step 4: Choose AI provider."""
         if user_input is not None:
             self._data.update(user_input)
+            # Choosing a provider in setup means the user wants AI routing.
+            # Without this the entry was created with ai_enabled unset and
+            # every command silently fell back to rule-based intents.
+            self._data[CONF_AI_ENABLED] = True
             provider = user_input.get(CONF_AI_PROVIDER)
             if provider == AI_PROVIDER_OLLAMA:
                 return await self.async_step_ollama()
@@ -412,6 +476,16 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         merged.pop("_ollama_models", None)  # scrub temp key from older saves
         return merged
 
+    def _save(self) -> FlowResult:
+        """Persist accumulated options.
+
+        Merges onto the EXISTING options only — never clones entry.data into
+        options (which would permanently shadow data and duplicate secrets).
+        """
+        merged = {**(self._entry.options or {}), **self._options}
+        merged.pop("_ollama_models", None)
+        return self.async_create_entry(title="", data=merged)
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -449,12 +523,17 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
             }),
         )
 
+    def _coordinator(self) -> Any:
+        """Return THIS entry's coordinator — not just "whichever loaded
+        first", which pointed re-index/test actions at the wrong server
+        entirely once a second entry existed."""
+        return self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+
     async def async_step_reindex(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Trigger a catalog re-index. Loops to show result, second submit closes."""
-        coordinators = list(self.hass.data.get("voice_jellyfin", {}).values())
-        coordinator = coordinators[0] if coordinators else None
+        coordinator = self._coordinator()
 
         def _catalog_size() -> int:
             if coordinator and coordinator.jellyfin_client and coordinator.jellyfin_client._catalog:
@@ -464,7 +543,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             if self._reindex_done:
                 # second submit — close without saving new options
-                return self.async_create_entry(title="", data={**self._current(), **self._options})
+                return self._save()
             # first submit — run re-index
             if coordinator:
                 try:
@@ -499,21 +578,33 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Interactive search and playback test. Loops until user selects Close."""
-        coordinators = list(self.hass.data.get("voice_jellyfin", {}).values())
-        coordinator = coordinators[0] if coordinators else None
+        coordinator = self._coordinator()
 
         if user_input is not None:
             action = user_input.get("action", "search")
 
             if action == "close":
-                return self.async_create_entry(title="", data={**self._current(), **self._options})
+                return self._save()
 
             query = (user_input.get("query") or "").strip()
             type_filter = user_input.get("type_filter") or None
             if type_filter == "all":
                 type_filter = None
+            preset = user_input.get("preset") or "custom"
+            command_text = query if preset == "custom" else preset
 
-            if not query:
+            if action == "command":
+                if not command_text:
+                    self._test_results = "⚠ Enter a command or pick a quick command first."
+                elif not coordinator:
+                    self._test_results = "✗ Coordinator not available."
+                else:
+                    try:
+                        reply = await coordinator.async_handle_voice(command_text)
+                        self._test_results = f'🗣 "{command_text}"\n→ {reply or "(no speech reply — check the TV/Now Playing sensor)"}'
+                    except Exception as exc:
+                        self._test_results = f"✗ Error: {exc}"
+            elif not query:
                 self._test_results = "⚠ Enter a query first."
             elif not coordinator or not coordinator.jellyfin_client:
                 self._test_results = "✗ Jellyfin client not available."
@@ -534,8 +625,11 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                         self._test_results = f'No results for "{query}".'
                     elif action == "play":
                         item = items[0]
+                        from .jellyfin.session_select import pick_session
                         sessions = await coordinator.jellyfin_client.async_get_sessions()
-                        session = next(iter(sessions), None)
+                        session = pick_session(
+                            sessions, device_filter=getattr(coordinator, "_target_device", None), require_item=False
+                        )
                         if not session:
                             self._test_results = "✗ No active Jellyfin session found."
                         else:
@@ -577,18 +671,40 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
+                    vol.Optional("preset"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                {"value": "custom", "label": "— Custom (type above) —"},
+                                {"value": "open jellyfin", "label": "open jellyfin"},
+                                {"value": "what's playing", "label": "what's playing"},
+                                {"value": "resume", "label": "resume"},
+                                {"value": "pause", "label": "pause"},
+                                {"value": "stop", "label": "stop"},
+                                {"value": "up", "label": "up"},
+                                {"value": "down", "label": "down"},
+                                {"value": "left", "label": "left"},
+                                {"value": "right", "label": "right"},
+                                {"value": "select", "label": "select"},
+                                {"value": "go back", "label": "go back"},
+                                {"value": "navigation mode", "label": "navigation mode (activate)"},
+                                {"value": "exit navigation mode", "label": "exit navigation mode"},
+                            ],
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
                     vol.Required("action"): selector.SelectSelector(
                         selector.SelectSelectorConfig(
                             options=[
                                 {"value": "search", "label": "Search"},
                                 {"value": "play", "label": "Play first result"},
+                                {"value": "command", "label": "Test voice command (full pipeline)"},
                                 {"value": "close", "label": "Close"},
                             ],
                             mode=selector.SelectSelectorMode.LIST,
                         )
                     ),
                 }),
-                {"type_filter": "all", "action": "search"},
+                {"type_filter": "all", "preset": "custom", "action": "search"},
             ),
             description_placeholders={"results": self._test_results},
         )
@@ -612,13 +728,19 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                 )
                 client = JellyfinClient(auth, verify_ssl=user_input.get(CONF_JELLYFIN_VERIFY_SSL, True), hass=self.hass)
                 await client.async_connect()
-                await client.async_close()
                 if test_only:
+                    await client.async_close()
                     errors["base"] = "connection_ok"
                 else:
                     user_input[CONF_CATALOG_REINDEX_INTERVAL] = int(user_input.get(CONF_CATALOG_REINDEX_INTERVAL, DEFAULT_CATALOG_REINDEX_INTERVAL))
                     self._options.update(user_input)
-                    return self.async_create_entry(title="", data={**current, **self._options})
+                    try:
+                        self._options["_jellyfin_users"] = await client.async_get_users()
+                    except Exception as exc:
+                        _LOGGER.debug("Could not list Jellyfin users: %s", exc)
+                        self._options["_jellyfin_users"] = []
+                    await client.async_close()
+                    return await self.async_step_jellyfin_user()
             except PermissionError as exc:
                 errors["base"] = "invalid_auth"
                 description_placeholders["status"] = f"\n\n{exc}"
@@ -655,6 +777,28 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
             description_placeholders={"status": description_placeholders.get("status", "")},
         )
 
+    async def async_step_jellyfin_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Change which Jellyfin user this entry acts as."""
+        current = self._current()
+        if user_input is not None:
+            self._options[CONF_JELLYFIN_DEFAULT_USER] = user_input.get(CONF_JELLYFIN_DEFAULT_USER, "")
+            self._options.pop("_jellyfin_users", None)
+            return self._save()
+
+        return self.async_show_form(
+            step_id="jellyfin_user",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({
+                    vol.Optional(CONF_JELLYFIN_DEFAULT_USER): _user_select(
+                        self._options.get("_jellyfin_users", [])
+                    ),
+                }),
+                {CONF_JELLYFIN_DEFAULT_USER: current.get(CONF_JELLYFIN_DEFAULT_USER, "")},
+            ),
+        )
+
     async def async_step_ai_provider(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -663,14 +807,14 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             self._options.update(user_input)
             if not user_input.get(CONF_AI_ENABLED, True):
-                return self.async_create_entry(title="", data={**current, **self._options})
+                return self._save()
             provider = user_input.get(CONF_AI_PROVIDER)
             if provider == AI_PROVIDER_OLLAMA:
                 return await self.async_step_ollama()
             if provider == AI_PROVIDER_OPENAI_COMPAT:
                 return await self.async_step_openai_compat()
             if provider == AI_PROVIDER_HA_CONVERSATION:
-                return self.async_create_entry(title="", data={**current, **self._options})
+                return self._save()
             return await self.async_step_cloud_provider()
 
         return self.async_show_form(
@@ -739,7 +883,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             self._options.update(user_input)
             self._options.pop("_ollama_models", None)
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         models: list[str] = self._options.get("_ollama_models", [])
         model_options = [{"value": m, "label": m} for m in models] or [{"value": "llama3", "label": "llama3"}]
@@ -772,7 +916,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         current = self._current()
         if user_input is not None:
             self._options.update(user_input)
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         return self.async_show_form(
             step_id="cloud_provider",
@@ -804,7 +948,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         current = self._current()
         if user_input is not None:
             self._options.update(user_input)
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         return self.async_show_form(
             step_id="openai_compat",
@@ -838,7 +982,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                 return await self.async_step_apple_tv()
             if tv_type == TV_TYPE_ANDROID:
                 return await self.async_step_android_tv()
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         return self.async_show_form(
             step_id="tv",
@@ -865,7 +1009,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         current = self._current()
         if user_input is not None:
             self._options.update(user_input)
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         return self.async_show_form(
             step_id="apple_tv",
@@ -875,10 +1019,12 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                         selector.EntitySelectorConfig(domain="remote")
                     ),
                     vol.Optional(CONF_TV_WAKE_SUPPORT): bool,
+                    vol.Optional(CONF_JELLYFIN_TARGET_DEVICE): str,
                 }),
                 {
                     CONF_APPLE_TV_ENTITY: current.get(CONF_APPLE_TV_ENTITY, ""),
                     CONF_TV_WAKE_SUPPORT: current.get(CONF_TV_WAKE_SUPPORT, True),
+                    CONF_JELLYFIN_TARGET_DEVICE: current.get(CONF_JELLYFIN_TARGET_DEVICE, ""),
                 },
             ),
         )
@@ -889,7 +1035,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         current = self._current()
         if user_input is not None:
             self._options.update(user_input)
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         return self.async_show_form(
             step_id="android_tv",
@@ -901,12 +1047,16 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                     vol.Optional(CONF_ADB_HOST): str,
                     vol.Optional(CONF_ADB_PORT): int,
                     vol.Optional(CONF_TV_WAKE_SUPPORT): bool,
+                    vol.Optional(CONF_PREFERRED_CLIENT_PACKAGE): str,
+                    vol.Optional(CONF_JELLYFIN_TARGET_DEVICE): str,
                 }),
                 {
                     CONF_ANDROID_TV_ENTITY: current.get(CONF_ANDROID_TV_ENTITY, ""),
                     CONF_ADB_HOST: current.get(CONF_ADB_HOST, ""),
                     CONF_ADB_PORT: current.get(CONF_ADB_PORT, 5555),
                     CONF_TV_WAKE_SUPPORT: current.get(CONF_TV_WAKE_SUPPORT, True),
+                    CONF_PREFERRED_CLIENT_PACKAGE: current.get(CONF_PREFERRED_CLIENT_PACKAGE, DEFAULT_PREFERRED_CLIENT_PACKAGE),
+                    CONF_JELLYFIN_TARGET_DEVICE: current.get(CONF_JELLYFIN_TARGET_DEVICE, ""),
                 },
             ),
         )
@@ -917,7 +1067,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
         current = self._current()
         if user_input is not None:
             self._options.update(user_input)
-            return self.async_create_entry(title="", data={**current, **self._options})
+            return self._save()
 
         return self.async_show_form(
             step_id="nav",

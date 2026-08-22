@@ -54,6 +54,20 @@ Once Navigation Mode is active, say any of the following:
 | again / one more / repeat | Repeat last key |
 | too far / go back one / undo | Reverse last key |
 
+### Repeat counts
+
+Any key phrase accepts a trailing count so one utterance can replace many:
+
+| Spoken phrase | Action |
+|---------------|--------|
+| right five times | Five D-pad RIGHT presses |
+| up 3 | Three D-pad UP presses |
+| down down down | Three D-pad DOWN presses |
+| volume up twice | Volume up ×2 |
+
+Counts work as digits ("right 5") or words ("five", "twice"), and are
+capped at 20 presses per utterance.
+
 ### Deactivating Navigation Mode
 
 - Say **"stop navigation"** or **"exit navigation mode"**

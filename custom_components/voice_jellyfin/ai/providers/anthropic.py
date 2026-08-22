@@ -15,7 +15,7 @@ class AnthropicProvider(AIProvider):
     def __init__(
         self,
         api_key: str,
-        model: str = "claude-3-haiku-20240307",
+        model: str = "claude-haiku-4-5",
         max_tokens: int = 512,
         timeout: int = 15,
     ) -> None:
@@ -58,5 +58,9 @@ class AnthropicProvider(AIProvider):
             system=system_prompt,
             messages=api_messages,
         )
-        content = response.content[0].text if response.content else ""
+        # Take the first text block — content may lead with non-text blocks
+        content = next(
+            (block.text for block in (response.content or []) if getattr(block, "text", None)),
+            "",
+        )
         return content.strip()

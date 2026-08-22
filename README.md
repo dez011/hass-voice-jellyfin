@@ -13,12 +13,16 @@ Say natural language commands to search, play, resume, and navigate your media �
 ## Features
 
 - **Natural Language Playback** — "Play the latest Breaking Bad episode", "Find something funny", "Resume what I was watching"
-- **Navigation Mode** — Hands-free D-pad control: "up", "down", "select", "back", etc.
+- **Navigation Mode** — Say the keyword once, then drive the TV hands-free: "up", "right five times", "select", "too far", until "exit navigation mode"
+- **Ask-when-ambiguous** — "play batman" with several matches asks "Which one?" and takes "the second one"
+- **Works without AI** — rule-based parsing covers everything; if a configured AI backend is unreachable it degrades gracefully instead of failing
+- **Multiple TVs / Multiple People** — add one entry per TV, each with its own Jellyfin user and an optional device-name filter, so "pause" on one TV never touches another's session
 - **Physical Accessibility Button** — Assign any HA entity to activate Navigation Mode with a single press
 - **Multiple AI Backends** — Ollama (local/private), OpenAI, Anthropic, Google Gemini, OpenRouter, or HA Conversation
 - **Android TV / ADB Control** — Send key events, launch apps, deep-link to specific Jellyfin items
-- **14 HA Services** — Automate from scripts, blueprints, or voice satellites
-- **Custom Lovelace Card** — Live status dashboard with command history
+- **15 HA Services** — Automate from scripts, blueprints, or voice satellites; `voice_command` bridges Assist/STT into the pipeline
+- **Custom Lovelace Card** — Live status dashboard with command history, plus tappable D-pad/back/Open-Jellyfin buttons and a text box to test commands without speaking
+- **No-Mic Testing** — Options → Voice Command Tester and the Lovelace card both let you type or tap commands through the real pipeline, no microphone required
 - **Conversation Context** — The AI remembers up to 10 turns for follow-up commands
 
 ---
@@ -39,6 +43,7 @@ Say natural language commands to search, play, resume, and navigate your media �
 3. Restart HA and add the integration
 
 Full instructions: [docs/installation.md](docs/installation.md)
+How to talk to it once installed: [docs/usage.md](docs/usage.md)
 
 ---
 
@@ -64,6 +69,7 @@ All services are available under the `voice_jellyfin` domain:
 
 | Service | Description | Key fields |
 |---------|-------------|------------|
+| `voice_jellyfin.voice_command` | Route raw voice text through the full pipeline (wake phrase, nav mode, hot mic, media commands) | `text` |
 | `voice_jellyfin.play` | Search and play media | `query`, `library_id` |
 | `voice_jellyfin.search` | Search and return results | `query` |
 | `voice_jellyfin.resume` | Resume in-progress media | `user_id` |
@@ -79,6 +85,27 @@ All services are available under the `voice_jellyfin` domain:
 | `voice_jellyfin.go_back` | Press Back | — |
 | `voice_jellyfin.reindex_catalog` | Rebuild the local media search index | — |
 
+### Hooking up voice
+
+`voice_command` is the entry point for spoken text. Wire your STT source
+(Assist sentence trigger, voice satellite, or any automation) to it and
+speak the response:
+
+```yaml
+triggers:
+  - trigger: conversation
+    command: "jellyfin {request}"
+actions:
+  - action: voice_jellyfin.voice_command
+    data:
+      text: "{{ trigger.slots.request }}"
+    response_variable: reply
+  - set_conversation_response: "{{ reply.speech }}"
+```
+
+Saying the configured wake phrase ("navigation mode") activates hands-free
+D-pad control; "exit navigation mode" leaves it.
+
 ---
 
 ## Entities Created
@@ -90,6 +117,7 @@ All services are available under the `voice_jellyfin` domain:
 | `sensor.voice_jellyfin_current_device` | Sensor | Linked TV entity ID |
 | `sensor.voice_jellyfin_last_command` | Sensor | Most recent voice command |
 | `sensor.voice_jellyfin_last_media` | Sensor | Most recently played title |
+| `sensor.voice_jellyfin_now_playing` | Sensor | What's actually playing right now — title, with client app / device / user / paused as attributes. One per config entry, so each TV shows only its own session |
 | `switch.voice_jellyfin_navigation_mode` | Switch | Toggle Navigation Mode |
 | `select.voice_jellyfin_ai_provider` | Select | Switch AI provider at runtime |
 
@@ -119,7 +147,7 @@ type: custom:voice-jellyfin-card
 title: Voice Jellyfin
 ```
 
-Shows: navigation mode status indicator, AI provider, connected device, last 5 commands, and a live voice-activity indicator.
+Shows: navigation mode status indicator, AI provider, connected device, last 5 commands, live voice-activity indicator, and Test Controls — D-pad, Back, Open Jellyfin, and a free-text command box that runs through the real pipeline and shows the spoken reply. Set `show_controls: false` to hide the test controls.
 
 See [docs/installation.md](docs/installation.md) for the resource URL setup.
 

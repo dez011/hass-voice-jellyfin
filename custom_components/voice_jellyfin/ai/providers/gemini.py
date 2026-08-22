@@ -15,14 +15,16 @@ class GeminiProvider(AIProvider):
     def __init__(
         self,
         api_key: str,
-        model: str = "gemini-1.5-flash",
+        model: str = "gemini-2.0-flash",
         temperature: float = 0.3,
         max_tokens: int = 512,
+        timeout: int = 15,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._timeout = timeout
         self._client: Optional[object] = None
 
     @property
@@ -32,7 +34,10 @@ class GeminiProvider(AIProvider):
     def _get_client(self) -> object:
         if self._client is None:
             from google import genai  # type: ignore[import]
-            self._client = genai.Client(api_key=self._api_key)
+            self._client = genai.Client(
+                api_key=self._api_key,
+                http_options={"timeout": self._timeout * 1000},  # milliseconds
+            )
         return self._client
 
     def _build_prompt(self, messages: list[dict], system_prompt: str) -> str:
@@ -63,4 +68,9 @@ class GeminiProvider(AIProvider):
             contents=prompt,
             config=config,
         )
-        return response.text.strip()
+        # response.text is None when the candidate has no text parts
+        # (safety block, or thinking consumed the whole token budget)
+        text = response.text
+        if not text:
+            raise ValueError("Gemini returned no text (blocked or token budget exhausted)")
+        return text.strip()

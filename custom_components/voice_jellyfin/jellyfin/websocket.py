@@ -51,9 +51,19 @@ class JellyfinWebSocket:
         ws_url = f"{ws_url}/socket?api_key={api_key}&deviceId=voice_jellyfin_ha"
 
         self._session = aiohttp.ClientSession()
-        self._ws = await self._session.ws_connect(ws_url)
+        try:
+            self._ws = await self._session.ws_connect(ws_url)
+        except Exception:
+            # Don't leak the ClientSession when the handshake fails
+            await self._session.close()
+            self._session = None
+            raise
         self._running = True
-        _LOGGER.debug("Jellyfin WebSocket connected: %s", ws_url)
+        _LOGGER.debug("Jellyfin WebSocket connected (api key redacted)")
+
+        # Subscribe to session updates — without this the server pushes
+        # nothing. "0,1500" = initial delay 0ms, updates every 1500ms.
+        await self._send({"MessageType": "SessionsStart", "Data": "0,1500"})
 
         self._listen_task = asyncio.ensure_future(
             self._listen(on_message_callback)
@@ -63,10 +73,17 @@ class JellyfinWebSocket:
     async def async_disconnect(self) -> None:
         """Gracefully close the WebSocket connection."""
         self._running = False
-        if self._keepalive_task:
-            self._keepalive_task.cancel()
-        if self._listen_task:
-            self._listen_task.cancel()
+        for task in (self._keepalive_task, self._listen_task):
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:  # noqa: BLE001 — task teardown must not raise
+                    pass
+        self._keepalive_task = None
+        self._listen_task = None
         if self._ws and not self._ws.closed:
             await self._ws.close()
         if self._session and not self._session.closed:
@@ -106,11 +123,14 @@ class JellyfinWebSocket:
         msg_type: str = payload.get("MessageType", "")
         data: Any = payload.get("Data")
 
-        if msg_type == "KeepAlive":
+        if msg_type in ("KeepAlive", "ForceKeepAlive"):
             await self._send({"MessageType": "KeepAlive"})
             return
 
         if msg_type in (
+            # "Sessions" is what the server actually pushes after a
+            # SessionsStart subscription; the rest are kept for compatibility.
+            "Sessions",
             "SessionsStart",
             "SessionsStop",
             "PlaybackStart",

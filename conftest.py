@@ -19,7 +19,7 @@ def _make_module(name: str, **attrs: object) -> types.ModuleType:
 # ── homeassistant core ────────────────────────────────────────────────────────
 
 _ha = _make_module("homeassistant")
-_ha_core = _make_module("homeassistant.core", HomeAssistant=MagicMock, callback=lambda f: f, ServiceCall=MagicMock)
+_ha_core = _make_module("homeassistant.core", HomeAssistant=MagicMock, callback=lambda f: f, ServiceCall=MagicMock, Event=MagicMock, SupportsResponse=MagicMock(OPTIONAL="optional"))
 _ha_const = _make_module("homeassistant.const", Platform=MagicMock(), EVENT_STATE_CHANGED="state_changed")
 
 # config_entries
@@ -55,6 +55,10 @@ class _ConfigFlow:
     def async_create_entry(self, **kw): return kw
     def add_suggested_values_to_schema(self, data_schema, suggested_values):
         return _add_suggested_values_to_schema(data_schema, suggested_values)
+    async def async_set_unique_id(self, unique_id):
+        self.unique_id = unique_id
+    def _abort_if_unique_id_configured(self):
+        pass
 _ce_mod = _make_module(
     "homeassistant.config_entries",
     ConfigEntry=_ConfigEntry,
@@ -86,6 +90,8 @@ _make_module("homeassistant.helpers.update_coordinator",
              UpdateFailed=Exception,
              CoordinatorEntity=_CoordinatorEntity)
 _make_module("homeassistant.helpers.entity_platform", AddEntitiesCallback=MagicMock)
+_make_module("homeassistant.helpers.event",
+             async_track_time_interval=MagicMock(return_value=MagicMock()))
 _make_module("homeassistant.helpers.config_validation",
              string=str, boolean=bool, positive_int=int,
              PLATFORM_SCHEMA=MagicMock())

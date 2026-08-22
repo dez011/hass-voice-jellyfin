@@ -74,6 +74,8 @@ class OllamaProvider(AIProvider):
                     return await self._read_stream(resp)
                 else:
                     data = await resp.json()
+                    if data.get("error"):
+                        raise RuntimeError(f"Ollama error: {data['error']}")
                     return (data.get("message", {}).get("content") or "").strip()
 
     async def _read_stream(
@@ -89,6 +91,9 @@ class OllamaProvider(AIProvider):
                 chunk = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if chunk.get("error"):
+                # Mid-stream errors (e.g. model OOM) arrive with HTTP 200
+                raise RuntimeError(f"Ollama error: {chunk['error']}")
             token = chunk.get("message", {}).get("content", "")
             if token:
                 parts.append(token)

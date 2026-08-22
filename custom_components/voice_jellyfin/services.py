@@ -8,8 +8,11 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 
+from .jellyfin.session_select import pick_session
+
 from .const import (
     DOMAIN,
+    SERVICE_VOICE_COMMAND,
     SERVICE_PLAY,
     SERVICE_SEARCH,
     SERVICE_RESUME,
@@ -64,7 +67,17 @@ _SCROLL_SCHEMA = vol.Schema({
     vol.Optional("amount", default=1): vol.All(int, vol.Range(min=1, max=20)),
 })
 
+_VOICE_COMMAND_SCHEMA = vol.Schema({
+    vol.Required("text"): cv.string,
+})
+
 _EMPTY_SCHEMA = vol.Schema({})
+
+try:  # HA 2023.7+
+    from homeassistant.core import SupportsResponse
+    _RESPONSE_OPTIONAL = SupportsResponse.OPTIONAL
+except ImportError:  # pragma: no cover
+    _RESPONSE_OPTIONAL = None
 
 
 def async_register_services(hass: HomeAssistant) -> None:
@@ -97,12 +110,11 @@ def async_register_services(hass: HomeAssistant) -> None:
 
     async def handle_play(call: ServiceCall) -> None:
         query = call.data["query"]
-        library_id = call.data.get("library_id")
-        cmd = f"play {query}"
-        if library_id:
-            cmd += f" in library {library_id}"
+        # Note: library_id is accepted for backwards compatibility but the
+        # command pipeline searches across all libraries; appending the raw
+        # GUID to the query would corrupt the search text.
         for coordinator in _get_coordinators():
-            await coordinator.async_send_command(cmd)
+            await coordinator.async_send_command(f"play {query}")
 
     async def handle_search(call: ServiceCall) -> None:
         query = call.data["query"]
@@ -114,31 +126,37 @@ def async_register_services(hass: HomeAssistant) -> None:
         for coordinator in _get_coordinators():
             if coordinator.jellyfin_client:
                 uid = user_id or coordinator.jellyfin_client._auth.user_id or ""
-                await coordinator.jellyfin_client.async_resume(uid)
+                await coordinator.jellyfin_client.async_resume(
+                    uid, device_filter=getattr(coordinator, "_target_device", None)
+                )
 
     async def handle_pause(call: ServiceCall) -> None:
         session_id = call.data.get("session_id")
         for coordinator in _get_coordinators():
             client = coordinator.jellyfin_client
             if client:
-                if not session_id:
+                # Resolve per coordinator — a session id discovered on one
+                # server (or TV) must not leak to another coordinator's.
+                sid = session_id
+                if not sid:
                     sessions = await client.async_get_sessions()
-                    active = next((s for s in sessions if s.item), None)
-                    session_id = active.id if active else None
-                if session_id:
-                    await client.async_pause(session_id)
+                    active = pick_session(sessions, device_filter=getattr(coordinator, "_target_device", None))
+                    sid = active.id if active else None
+                if sid:
+                    await client.async_pause(sid)
 
     async def handle_stop(call: ServiceCall) -> None:
         session_id = call.data.get("session_id")
         for coordinator in _get_coordinators():
             client = coordinator.jellyfin_client
             if client:
-                if not session_id:
+                sid = session_id
+                if not sid:
                     sessions = await client.async_get_sessions()
-                    active = next((s for s in sessions if s.item), None)
-                    session_id = active.id if active else None
-                if session_id:
-                    await client.async_stop(session_id)
+                    active = pick_session(sessions, device_filter=getattr(coordinator, "_target_device", None))
+                    sid = active.id if active else None
+                if sid:
+                    await client.async_stop(sid)
 
     async def handle_navigate(call: ServiceCall) -> None:
         direction = call.data["direction"]
@@ -190,6 +208,26 @@ def async_register_services(hass: HomeAssistant) -> None:
         for coordinator in _get_coordinators():
             await coordinator.async_reindex_catalog()
 
+    async def handle_voice_command(call: ServiceCall) -> Any:
+        """Route raw voice/STT text through the full pipeline.
+
+        This is the bridge between Assist / sentence triggers / voice
+        satellites and the integration: wake phrase, Navigation Mode keys,
+        hot mic, and media commands all flow through here. Returns the
+        spoken reply as a service response for TTS automations.
+        """
+        text = call.data["text"]
+        replies: list[str] = []
+        for coordinator in _get_coordinators():
+            reply = await coordinator.async_handle_voice(text)
+            if reply:
+                replies.append(reply)
+        if not _get_coordinators():
+            _LOGGER.warning("No Voice Jellyfin entries loaded")
+        if getattr(call, "return_response", False):
+            return {"speech": " ".join(replies)}
+        return None
+
     # ------------------------------------------------------------------
     # Registration
     # ------------------------------------------------------------------
@@ -215,3 +253,12 @@ def async_register_services(hass: HomeAssistant) -> None:
         if not hass.services.has_service(DOMAIN, svc_name):
             hass.services.async_register(DOMAIN, svc_name, handler, schema=schema)
             _LOGGER.debug("Registered service: %s.%s", DOMAIN, svc_name)
+
+    if not hass.services.has_service(DOMAIN, SERVICE_VOICE_COMMAND):
+        kwargs = {"schema": _VOICE_COMMAND_SCHEMA}
+        if _RESPONSE_OPTIONAL is not None:
+            kwargs["supports_response"] = _RESPONSE_OPTIONAL
+        hass.services.async_register(
+            DOMAIN, SERVICE_VOICE_COMMAND, handle_voice_command, **kwargs
+        )
+        _LOGGER.debug("Registered service: %s.%s", DOMAIN, SERVICE_VOICE_COMMAND)

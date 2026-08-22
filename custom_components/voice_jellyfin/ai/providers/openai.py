@@ -49,11 +49,14 @@ class OpenAIProvider(AIProvider):
     ) -> str:
         client = self._get_client()
         api_messages = [{"role": "system", "content": system_prompt}] + list(messages)
-        response = await client.chat.completions.create(  # type: ignore[union-attr]
-            model=self._model,
-            messages=api_messages,
-            temperature=self._temperature,
-            max_tokens=self._max_tokens,
-        )
+        kwargs: dict = {"model": self._model, "messages": api_messages}
+        # Reasoning models reject the legacy max_tokens param and a custom
+        # temperature — they require max_completion_tokens.
+        if self._model.startswith(("o1", "o3", "o4", "gpt-5")):
+            kwargs["max_completion_tokens"] = self._max_tokens
+        else:
+            kwargs["max_tokens"] = self._max_tokens
+            kwargs["temperature"] = self._temperature
+        response = await client.chat.completions.create(**kwargs)  # type: ignore[union-attr]
         content = response.choices[0].message.content or ""
         return content.strip()

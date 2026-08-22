@@ -78,40 +78,50 @@ async def build_provider(hass: HomeAssistant, config: dict[str, Any]) -> AIProvi
             timeout=config.get(CONF_AI_TIMEOUT, DEFAULT_AI_TIMEOUT),
         )
 
-    if provider_key == AI_PROVIDER_OPENAI:
-        from .openai import OpenAIProvider
-        return OpenAIProvider(
-            api_key=config[CONF_AI_API_KEY],
-            model=config.get(CONF_AI_MODEL, "gpt-4o-mini"),
-            temperature=config.get(CONF_AI_TEMPERATURE, DEFAULT_AI_TEMPERATURE),
-            max_tokens=config.get(CONF_AI_MAX_TOKENS, DEFAULT_AI_MAX_TOKENS),
-            timeout=config.get(CONF_AI_TIMEOUT, DEFAULT_AI_TIMEOUT),
-            org_id=config.get(CONF_AI_ORG_ID),
-        )
+    # Cloud providers all require an API key — degrade gracefully (rule-based
+    # intents still work) rather than raising KeyError during setup.
+    if provider_key in (AI_PROVIDER_OPENAI, AI_PROVIDER_ANTHROPIC, AI_PROVIDER_GEMINI, AI_PROVIDER_OPENROUTER):
+        api_key = config.get(CONF_AI_API_KEY, "")
+        if not api_key:
+            _LOGGER.error(
+                "AI provider %s is configured without an API key — AI disabled", provider_key
+            )
+            return None
 
-    if provider_key == AI_PROVIDER_ANTHROPIC:
-        from .anthropic import AnthropicProvider
-        return AnthropicProvider(
-            api_key=config[CONF_AI_API_KEY],
-            model=config.get(CONF_AI_MODEL, "claude-3-haiku-20240307"),
-            max_tokens=config.get(CONF_AI_MAX_TOKENS, DEFAULT_AI_MAX_TOKENS),
-            timeout=config.get(CONF_AI_TIMEOUT, DEFAULT_AI_TIMEOUT),
-        )
+        if provider_key == AI_PROVIDER_OPENAI:
+            from .openai import OpenAIProvider
+            return OpenAIProvider(
+                api_key=api_key,
+                model=config.get(CONF_AI_MODEL) or "gpt-4o-mini",
+                temperature=config.get(CONF_AI_TEMPERATURE, DEFAULT_AI_TEMPERATURE),
+                max_tokens=config.get(CONF_AI_MAX_TOKENS, DEFAULT_AI_MAX_TOKENS),
+                timeout=config.get(CONF_AI_TIMEOUT, DEFAULT_AI_TIMEOUT),
+                org_id=config.get(CONF_AI_ORG_ID),
+            )
 
-    if provider_key == AI_PROVIDER_GEMINI:
-        from .gemini import GeminiProvider
-        return GeminiProvider(
-            api_key=config[CONF_AI_API_KEY],
-            model=config.get(CONF_AI_MODEL, "gemini-1.5-flash"),
-            temperature=config.get(CONF_AI_TEMPERATURE, DEFAULT_AI_TEMPERATURE),
-            max_tokens=config.get(CONF_AI_MAX_TOKENS, DEFAULT_AI_MAX_TOKENS),
-        )
+        if provider_key == AI_PROVIDER_ANTHROPIC:
+            from .anthropic import AnthropicProvider
+            return AnthropicProvider(
+                api_key=api_key,
+                model=config.get(CONF_AI_MODEL) or "claude-haiku-4-5",
+                max_tokens=config.get(CONF_AI_MAX_TOKENS, DEFAULT_AI_MAX_TOKENS),
+                timeout=config.get(CONF_AI_TIMEOUT, DEFAULT_AI_TIMEOUT),
+            )
 
-    if provider_key == AI_PROVIDER_OPENROUTER:
+        if provider_key == AI_PROVIDER_GEMINI:
+            from .gemini import GeminiProvider
+            return GeminiProvider(
+                api_key=api_key,
+                model=config.get(CONF_AI_MODEL) or "gemini-2.0-flash",
+                temperature=config.get(CONF_AI_TEMPERATURE, DEFAULT_AI_TEMPERATURE),
+                max_tokens=config.get(CONF_AI_MAX_TOKENS, DEFAULT_AI_MAX_TOKENS),
+                timeout=config.get(CONF_AI_TIMEOUT, DEFAULT_AI_TIMEOUT),
+            )
+
         from .openrouter import OpenRouterProvider
         return OpenRouterProvider(
-            api_key=config[CONF_AI_API_KEY],
-            model=config.get(CONF_AI_MODEL, "openai/gpt-4o-mini"),
+            api_key=api_key,
+            model=config.get(CONF_AI_MODEL) or "openai/gpt-4o-mini",
             temperature=config.get(CONF_AI_TEMPERATURE, DEFAULT_AI_TEMPERATURE),
             max_tokens=config.get(CONF_AI_MAX_TOKENS, DEFAULT_AI_MAX_TOKENS),
             timeout=config.get(CONF_AI_TIMEOUT, DEFAULT_AI_TIMEOUT),

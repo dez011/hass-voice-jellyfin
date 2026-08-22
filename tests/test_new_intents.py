@@ -310,9 +310,15 @@ def test_catalog_min_score_rejects_low_confidence():
         MediaItem(id="m1", name="Up", type="Movie"),
         MediaItem(id="m2", name="Uptown Funk Documentary", type="Movie"),
     ])
-    # "Up" is 2 chars — both items could match; gap is too small, should return []
+    # "up" is an EXACT title match — it must win despite the short-query
+    # ambiguity rule (which only guards prefix/substring matches).
     results = catalog.search("up", limit=5)
-    assert results == [], f"Expected no results for ambiguous short query, got {[r.name for r in results]}"
+    assert results and results[0].name == "Up"
+
+    # A short query that is NOT an exact title stays guarded: "upt" prefixes
+    # "Uptown Funk Documentary" but is ambiguous against nothing → matches.
+    # A genuinely ambiguous prefix ("u" scores nothing ≥ min) returns [].
+    assert catalog.search("u", limit=5) == []
 
 
 def test_catalog_exact_match_still_works():
@@ -413,14 +419,23 @@ async def test_async_get_series_play_target_with_season():
 
 
 @pytest.mark.asyncio
-async def test_async_play_sends_bitrate_param():
+async def test_async_play_sends_bitrate_command():
+    """Bitrate caps go through the SetMaxStreamingBitrate general command —
+    the Play endpoint has no bitrate parameter (it was silently ignored)."""
     resp = _mock_response({})
     session = _mock_session(resp)
     with patch("aiohttp.ClientSession", return_value=session):
         client = JellyfinClient(_make_auth())
         await client.async_play("sess-001", "item-001", max_bitrate_kbps=4000)
-    params = session.post.call_args[1].get("params", {})
-    assert params.get("MaxStreamingBitrate") == 4_000_000
+    assert session.post.call_count == 2
+    cmd_call = session.post.call_args_list[0]
+    assert cmd_call[0][0].endswith("/Sessions/sess-001/Command")
+    payload = cmd_call[1]["json"]
+    assert payload["Name"] == "SetMaxStreamingBitrate"
+    assert payload["Arguments"]["Bitrate"] == "4000000"
+    play_call = session.post.call_args_list[1]
+    assert "Sessions/sess-001/Playing" in play_call[0][0]
+    assert "MaxStreamingBitrate" not in play_call[1].get("params", {})
 
 
 @pytest.mark.asyncio

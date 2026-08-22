@@ -68,6 +68,20 @@ class JellyfinCatalog:
             return []
         query_lower = query.strip().lower()
         query_tokens = _tokenize(query_lower)
+
+        # Empty query: meaningful only as a filter-browse ("a comedy from
+        # 2019") — without filters it would otherwise match the whole library.
+        if not query_lower:
+            if not (type_filter or genre_hint or year):
+                return []
+            results = [
+                e.item for e in self._entries
+                if (not type_filter or e.item.type == type_filter)
+                and (not year or e.item.year == year)
+                and (not genre_hint or genre_hint in e.item.genres)
+            ][:limit]
+            return results
+
         scored: list[tuple[float, "MediaItem"]] = []
         for entry in self._entries:
             if type_filter and entry.item.type != type_filter:
@@ -83,8 +97,15 @@ class JellyfinCatalog:
 
         # For short queries (≤3 chars or single token) require the top hit to
         # clearly dominate the second — prevents "Up" matching "Upstairs" etc.
+        # An exact title match (score 1.0) is always trusted, so "Bluey" still
+        # wins even when "Bluey Espanol" sits right behind it.
         short_query = len(query_lower.replace(" ", "")) <= 3 or len(query_tokens) <= 1
-        if short_query and len(scored) >= 2 and (scored[0][0] - scored[1][0]) < _MIN_SCORE_GAP:
+        if (
+            short_query
+            and len(scored) >= 2
+            and scored[0][0] < 1.0
+            and (scored[0][0] - scored[1][0]) < _MIN_SCORE_GAP
+        ):
             scored = []
 
         results = [item for _, item in scored[:limit]]

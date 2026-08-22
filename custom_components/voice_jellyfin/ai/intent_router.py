@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from .base import AIProvider
 from .context import AIContext
+from ..jellyfin.session_select import pick_now_playing, pick_session
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,18 +109,39 @@ class IntentRouter:
         preferred_client_package: str = "org.jellyfin.androidtv",
         bitrate_presets: Optional[list[int]] = None,
         current_bitrate_idx: int = -1,
+        device_filter: Optional[str] = None,
     ) -> None:
         self._jellyfin = jellyfin
         self._tv = tv
         self._nav = nav
         self._hass = hass
         self._preferred_client_package = preferred_client_package
+        # Substring matched against a Jellyfin session's DeviceName/Client so
+        # commands from this entry target ITS TV in a multi-TV household,
+        # not just whichever session the Jellyfin API happens to list first.
+        self._device_filter = (device_filter or "").strip() or None
         from ..const import BITRATE_PRESETS_KBPS
         self._bitrate_presets = bitrate_presets or BITRATE_PRESETS_KBPS
         self._bitrate_idx = current_bitrate_idx  # -1 = auto (no cap)
         tv_label = _TV_LABELS.get(tv_type)
         tv_clause = f" and {tv_label}" if tv_label else ""
         self._system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(tv_clause=tv_clause)
+
+    def _pick(
+        self, sessions: list[Any], require_item: bool = True, paused: Optional[bool] = None
+    ) -> Optional[Any]:
+        """Pick the session this entry's commands should target."""
+        return pick_session(sessions, device_filter=self._device_filter, require_item=require_item, paused=paused)
+
+    def _pick_now_playing(self, sessions: list[Any]) -> Optional[Any]:
+        return pick_now_playing(sessions, device_filter=self._device_filter)
+
+    def _no_session_reply(self) -> str:
+        """Speech for 'nothing to act on' — names the target TV when one is
+        configured, so a miss reads as 'wrong/no TV' not a generic failure."""
+        if self._device_filter:
+            return f"Jellyfin isn't open on {self._device_filter}."
+        return "No active player session found."
 
     async def async_route(
         self,
@@ -137,6 +160,22 @@ class IntentRouter:
         """
         context.add_turn("user", text)
 
+        # A previous PLAY was ambiguous — check if this command picks one
+        # of the offered titles ("the first one", "batman begins", "two").
+        if context.pending_choices:
+            choice = self._match_choice(text, context.pending_choices)
+            context.pending_choices = []
+            if choice is not None:
+                result = IntentResult(intent="PLAY", params={"query": choice.name})
+                try:
+                    result = await self._play_media_item(result, choice)
+                except Exception as exc:
+                    _LOGGER.error("Choice playback failed: %s", exc)
+                    result.speech_reply = result.speech_reply or "Sorry, that didn't work."
+                context.add_turn("assistant", result.speech_reply or "Done.")
+                context.last_action = result.intent
+                return result
+
         if not ai_enabled or provider is None:
             result = self._rule_based_intent(text)
             _LOGGER.debug(
@@ -154,14 +193,15 @@ class IntentRouter:
                 messages=context.get_messages(),
                 system_prompt=self._system_prompt,
             )
-            result = self._parse(raw)
+            result = self._parse(raw, fallback_query=text)
         except Exception as exc:
-            _LOGGER.error("AI query failed: %s", exc)
-            result = IntentResult(
-                intent="SEARCH",
-                params={"query": text},
-                speech_reply="Sorry, I had trouble understanding that.",
+            # An unreachable AI backend must never be catastrophic — fall
+            # back to the rule-based intents so navigation, playback, and
+            # search keep working exactly as if AI were disabled.
+            _LOGGER.warning(
+                "AI provider unavailable (%s); using rule-based intent for %r", exc, text
             )
+            result = self._rule_based_intent(text)
 
         result = await self._dispatch(result, context)
         context.add_turn("assistant", result.speech_reply or "Done.")
@@ -172,8 +212,13 @@ class IntentRouter:
     # Internal
     # ------------------------------------------------------------------
 
-    def _parse(self, raw: str) -> IntentResult:
-        """Parse raw JSON from the AI into an IntentResult."""
+    def _parse(self, raw: str, fallback_query: str = "") -> IntentResult:
+        """Parse raw JSON from the AI into an IntentResult.
+
+        On unparseable output, fall back to a SEARCH for the user's ORIGINAL
+        text (*fallback_query*) — never for the AI's reply, which would send
+        strings like "Sorry, I couldn't understand" to Jellyfin.
+        """
         raw = raw.strip()
         # Strip markdown fences if present
         if raw.startswith("```"):
@@ -181,16 +226,26 @@ class IntentRouter:
             raw = "\n".join(
                 line for line in lines if not line.startswith("```")
             ).strip()
+        data: Any = None
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
+            # The model may wrap the JSON in prose ("Here is the JSON: {...}")
+            start, end = raw.find("{"), raw.rfind("}")
+            if start != -1 and end > start:
+                try:
+                    data = json.loads(raw[start:end + 1])
+                except json.JSONDecodeError:
+                    data = None
+        if not isinstance(data, dict):
             _LOGGER.warning("AI returned non-JSON: %s", raw[:200])
-            return IntentResult(intent="SEARCH", params={"query": raw})
+            return IntentResult(intent="SEARCH", params={"query": fallback_query or raw})
 
+        params = data.get("params")
         return IntentResult(
-            intent=data.get("intent", "SEARCH").upper(),
-            params=data.get("params", {}),
-            speech_reply=data.get("speech", ""),
+            intent=str(data.get("intent", "SEARCH")).upper(),
+            params=params if isinstance(params, dict) else {},
+            speech_reply=data.get("speech") or "",
         )
 
     async def _dispatch(
@@ -252,8 +307,12 @@ class IntentRouter:
                 if self._nav:
                     await self._nav.async_deactivate()
             elif intent in ("REPEAT",):
-                if context.last_action:
-                    result.speech_reply = f"Repeating {context.last_action}."
+                last_key = getattr(self._nav, "_last_key", None) if self._nav else None
+                if last_key:
+                    await self._send_key(last_key)
+                    result.speech_reply = result.speech_reply or "Repeating."
+                else:
+                    result.speech_reply = result.speech_reply or "Nothing to repeat."
             elif intent == "REVERSE":
                 await self._send_key("back")
             elif intent == "SELECT":
@@ -266,6 +325,11 @@ class IntentRouter:
                     amount = 1
                 for _ in range(amount):
                     await self._send_key(direction)
+            else:
+                # The model invented an intent outside the schema — don't
+                # silently report success ("Done.") for an action never taken.
+                _LOGGER.warning("Unknown intent from AI: %s", intent)
+                result.speech_reply = result.speech_reply or "Sorry, I can't do that yet."
         except Exception as exc:
             _LOGGER.error("Intent dispatch error for %s: %s", intent, exc)
             result.speech_reply = result.speech_reply or "Sorry, that didn't work."
@@ -289,7 +353,13 @@ class IntentRouter:
 
         from ..jellyfin.query_parser import parse_query
         pq = parse_query(raw_query)
-        season_number: Optional[int] = result.params.get("season")
+        season_number: Optional[int] = None
+        try:
+            raw_season = result.params.get("season")
+            if raw_season is not None:
+                season_number = int(raw_season)  # models may emit "3" as a string
+        except (ValueError, TypeError):
+            season_number = None
         _LOGGER.debug("Play parsed: raw=%r query=%r type=%s year=%s genre=%s season=%s",
                       pq.raw, pq.query, pq.type_filter, pq.year, pq.genre_hint, season_number)
 
@@ -304,11 +374,31 @@ class IntentRouter:
             result.speech_reply = f"I couldn't find anything matching '{raw_query}'."
             return result
 
-        item = items[0]
+        # Multiple distinct matches and none is an exact title match —
+        # ask instead of guessing, and remember the options so the next
+        # command ("the first one", "batman begins") can pick.
+        query_l = pq.query.strip().lower()
+        raw_l = pq.raw.strip().lower()
+        if len(items) > 1 and items[0].name.strip().lower() not in (query_l, raw_l):
+            choices = items[:3]
+            context.pending_choices = choices
+            names = ", ".join(
+                f"{i + 1}: {item.name}" + (f" ({item.year})" if item.year else "")
+                for i, item in enumerate(choices)
+            )
+            result.speech_reply = f"I found {names}. Which one?"
+            return result
+
+        return await self._play_media_item(result, items[0], season_number=season_number)
+
+    async def _play_media_item(
+        self, result: IntentResult, item: Any, season_number: Optional[int] = None
+    ) -> IntentResult:
+        """Play *item* on the active session (resolving series targets)."""
         sessions = await self._jellyfin.async_get_sessions()
-        session = next(iter(sessions), None)
+        session = self._pick(sessions, require_item=False)
         if not session:
-            result.speech_reply = "No active player session found."
+            result.speech_reply = self._no_session_reply()
             return result
 
         play_id = item.id
@@ -325,11 +415,41 @@ class IntentRouter:
         await self._ensure_tv_awake()
         await self._jellyfin.async_play(session.id, play_id, start_ticks=start_ticks)
         result.media_title = item.name
-        if season_number:
+        if season_number is not None:
             result.speech_reply = result.speech_reply or f"Playing {item.name} season {season_number}."
         else:
             result.speech_reply = result.speech_reply or f"Playing {item.name}."
         return result
+
+    _ORDINAL_WORDS = {
+        "first": 0, "1st": 0, "one": 0, "1": 0,
+        "second": 1, "2nd": 1, "two": 1, "2": 1,
+        "third": 2, "3rd": 2, "three": 2, "3": 2,
+    }
+
+    def _match_choice(self, text: str, choices: list[Any]) -> Optional[Any]:
+        """Match a follow-up command against pending play choices.
+
+        Accepts ordinals ("the first one", "number two", "2") and title
+        matches ("batman begins"). Returns None when the utterance doesn't
+        look like a selection — the caller then routes it normally.
+        """
+        lower = text.strip().lower()
+        words = [w for w in re.findall(r"[a-z0-9]+", lower)
+                 if w not in ("the", "number", "play", "option", "pick", "choose")]
+        # Pure ordinal selection: everything left maps to one index
+        if words and all(w in self._ORDINAL_WORDS or w == "one" for w in words):
+            for w in words:
+                if w in self._ORDINAL_WORDS:
+                    idx = self._ORDINAL_WORDS[w]
+                    if idx < len(choices):
+                        return choices[idx]
+        # Title match
+        for item in choices:
+            name_l = item.name.strip().lower()
+            if lower == name_l or name_l in lower or lower in name_l:
+                return item
+        return None
 
     async def _handle_search(
         self, result: IntentResult, context: AIContext
@@ -376,16 +496,17 @@ class IntentRouter:
             return result
         # Check for a currently paused session first — unpause it
         sessions = await self._jellyfin.async_get_sessions()
-        paused = next((s for s in sessions if s.item and s.is_paused), None)
+        paused = self._pick(sessions, require_item=True, paused=True)
         if paused:
             await self._jellyfin.async_unpause(paused.id)
             name = paused.item.name if paused.item else "playback"
             result.media_title = name
             result.speech_reply = result.speech_reply or f"Resuming {name}."
             return result
-        # No paused session — resume first in-progress item
-        user_id = params.get("user_id", self._jellyfin._auth.user_id or "")
-        title = await self._jellyfin.async_resume(user_id)
+        # No paused session — resume first in-progress item.
+        # `or` (not a .get default) so a JSON null user_id still falls back.
+        user_id = params.get("user_id") or self._jellyfin._auth.user_id or ""
+        title = await self._jellyfin.async_resume(user_id, device_filter=self._device_filter)
         if title:
             result.media_title = title
             result.speech_reply = result.speech_reply or f"Resuming {title}."
@@ -424,9 +545,9 @@ class IntentRouter:
             return result
         ep_id, ep_name = latest
         sessions = await self._jellyfin.async_get_sessions()
-        session = next(iter(sessions), None)
+        session = self._pick(sessions, require_item=False)
         if not session:
-            result.speech_reply = "No active player session found."
+            result.speech_reply = self._no_session_reply()
             return result
         await self._ensure_tv_awake()
         await self._jellyfin.async_play(session.id, ep_id)
@@ -461,24 +582,26 @@ class IntentRouter:
         if not self._jellyfin:
             return result
         sessions = await self._jellyfin.async_get_sessions()
-        active = next((s for s in sessions if s.item), None)
+        active = self._pick(sessions, require_item=True)
         if not active:
             result.speech_reply = "Nothing is playing."
             return result
 
-        # Move index
+        # Compute the new index locally; commit only after the restart
+        # succeeds so a failed call doesn't desync the tracked quality step.
         if self._bitrate_idx < 0:
             # Currently auto — start from top or bottom depending on direction
-            self._bitrate_idx = len(self._bitrate_presets) - 1 if direction < 0 else 0
+            new_idx = len(self._bitrate_presets) - 1 if direction < 0 else 0
         else:
-            self._bitrate_idx = max(0, min(len(self._bitrate_presets) - 1, self._bitrate_idx + direction))
+            new_idx = max(0, min(len(self._bitrate_presets) - 1, self._bitrate_idx + direction))
 
-        bitrate = self._bitrate_presets[self._bitrate_idx]
+        bitrate = self._bitrate_presets[new_idx]
         item_id = active.item.id  # type: ignore[union-attr]
         pos = active.position_ticks
 
         await self._jellyfin.async_stop(active.id)
         await self._jellyfin.async_play(active.id, item_id, start_ticks=pos, max_bitrate_kbps=bitrate)
+        self._bitrate_idx = new_idx
 
         label = f"{bitrate // 1000} Mbps" if bitrate >= 1000 else f"{bitrate} kbps"
         result.speech_reply = result.speech_reply or f"Quality set to {label}."
@@ -488,7 +611,7 @@ class IntentRouter:
         if not self._jellyfin:
             return result
         sessions = await self._jellyfin.async_get_sessions()
-        active = next((s for s in sessions if s.item), None)
+        active = self._pick(sessions, require_item=True)
         if not active or not active.item:
             result.speech_reply = "Nothing is playing to favorite."
             return result
@@ -502,15 +625,21 @@ class IntentRouter:
         if not self._jellyfin:
             return result
         sessions = await self._jellyfin.async_get_sessions()
-        active = next((s for s in sessions if s.item and not s.is_paused), None)
-        if not active:
-            active = next((s for s in sessions if s.item), None)
+        active = self._pick_now_playing(sessions)
         if not active or not active.item:
-            result.speech_reply = "Nothing is currently playing."
+            if self._device_filter:
+                result.speech_reply = f"Nothing is playing on {self._device_filter}."
+            else:
+                result.speech_reply = "Nothing is currently playing."
             return result
         name = active.item.name
         paused = " (paused)" if active.is_paused else ""
-        result.speech_reply = result.speech_reply or f"Now playing: {name}{paused}."
+        # Only name the device when we're not already scoped to one TV —
+        # otherwise "playing on X" is redundant with the question asked.
+        device_note = ""
+        if not self._device_filter and active.device_name:
+            device_note = f" on {active.device_name}"
+        result.speech_reply = result.speech_reply or f"Now playing: {name}{paused}{device_note}."
         return result
 
     async def _handle_open_app(self, result: IntentResult) -> IntentResult:
@@ -545,7 +674,7 @@ class IntentRouter:
         if not self._jellyfin:
             return None
         sessions = await self._jellyfin.async_get_sessions()
-        active = next((s for s in sessions if s.item), None)
+        active = self._pick(sessions, require_item=True)
         return active.id if active else None
 
     async def _send_key(self, key: str) -> None:
