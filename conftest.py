@@ -110,6 +110,9 @@ _make_module("homeassistant.components")
 _make_module("homeassistant.components.sensor", SensorEntity=object)
 _make_module("homeassistant.components.switch", SwitchEntity=object)
 _make_module("homeassistant.components.select", SelectEntity=object)
+# Used by frontend.py to serve and auto-load the Lovelace card.
+_make_module("homeassistant.components.frontend", add_extra_js_url=MagicMock())
+_make_module("homeassistant.components.http", StaticPathConfig=MagicMock())
 
 # exceptions
 _make_module("homeassistant.exceptions", HomeAssistantError=Exception)

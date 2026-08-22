@@ -515,7 +515,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                             {"value": "tv", "label": "TV Device"},
                             {"value": "nav", "label": "Navigation & Button"},
                             {"value": "reindex", "label": "Re-index Media Catalog"},
-                            {"value": "test", "label": "Search & Playback Test"},
+                            {"value": "test", "label": "Test Commands (no microphone needed)"},
                         ],
                         mode=selector.SelectSelectorMode.LIST,
                     )
