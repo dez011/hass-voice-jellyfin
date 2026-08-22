@@ -75,22 +75,38 @@ git commit -m "chore: release v$VERSION"
 git tag "v$VERSION"
 
 # ── 6. Push branch + tag ──────────────────────────────────────────────────────
-# The tag push is what actually matters: .github/workflows/release.yml triggers
-# on any "v*" tag push and creates the GitHub Release automatically. A local-only
-# tag (commit + `git tag` with no push) is invisible to GitHub and to HACS —
-# that's exactly how v0.2.0 went stale: it was tagged locally but never pushed,
-# so no Release ever got created and HACS never saw an update.
+# A local-only tag (commit + `git tag` with no push) is invisible to GitHub
+# and to HACS — that's exactly how v0.2.0 went stale: it was tagged locally
+# but never pushed, so HACS never saw an update.
 BRANCH="$(git branch --show-current)"
 echo "Pushing $BRANCH and tag v$VERSION..."
 git push origin "$BRANCH"
 git push origin "v$VERSION"
 
+# ── 7. Create the GitHub Release ──────────────────────────────────────────────
+# .github/workflows/release.yml is deliberately workflow_dispatch-only, NOT
+# triggered by the tag push above — HACS tracks the default branch only until
+# a repo has a published Release, then pins to releases from then on, so
+# auto-releasing on every tag would silently stop HACS from following master.
+# Cutting the actual Release is therefore this explicit step, not automatic.
+if ! command -v gh >/dev/null 2>&1; then
+  echo ""
+  echo "⚠ gh CLI not found — tag v$VERSION was pushed but no GitHub Release was created."
+  echo "  HACS will NOT see this update until one exists. Create it with:"
+  echo "  gh release create v$VERSION --repo dez011/hass-voice-jellyfin --title \"v$VERSION\" --generate-notes"
+  exit 0
+fi
+
+NOTES="$(printf '%b' "$ENTRY")"
+gh release create "v$VERSION" \
+  --repo dez011/hass-voice-jellyfin \
+  --title "v$VERSION" \
+  --notes "$NOTES"
+
 echo ""
 echo "✓ Released v$VERSION"
 echo ""
-echo "GitHub Actions will build the release now:"
-echo "  https://github.com/dez011/hass-voice-jellyfin/actions"
-echo "Release page (live once the workflow finishes, usually <1 min):"
+echo "Release page:"
 echo "  https://github.com/dez011/hass-voice-jellyfin/releases/tag/v$VERSION"
 echo ""
 echo "Then in Home Assistant: HACS → Voice Jellyfin → ⋮ → Redownload, then"
