@@ -4,6 +4,14 @@ on:
   push:
     tags:
       - "v*"
+  # Lets a release be cut from the Actions tab without pushing a tag by hand.
+  # The runner's GITHUB_TOKEN can write refs, so CI creates the tag itself.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.2.0 (blank = use manifest.json)"
+        required: false
+        default: ""
 
 jobs:
   release:
@@ -18,9 +26,35 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract version from tag
+      - name: Resolve version
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            if [ -z "$VERSION" ]; then
+              VERSION=$(python3 -c "import json; print(json.load(open('custom_components/voice_jellyfin/manifest.json'))['version'])")
+            fi
+            VERSION="${VERSION#v}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "TAG=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Releasing v${VERSION}"
+
+      - name: Create tag if it does not exist
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          TAG="${{ steps.version.outputs.TAG }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists on origin — reusing it."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "${TAG}" -m "Voice Jellyfin ${TAG}"
+            git push origin "${TAG}"
+            echo "Created and pushed ${TAG}."
+          fi
 
       - name: Update manifest version
         run: |
@@ -30,7 +64,7 @@ jobs:
 
       - name: Create release archive
         run: |
-          zip -r "voice_jellyfin-${{ github.ref_name }}.zip" \
+          zip -r "voice_jellyfin-${{ steps.version.outputs.TAG }}.zip" \
             custom_components/voice_jellyfin/ \
             hacs.json \
             README.md \
@@ -40,11 +74,12 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "Voice Jellyfin ${{ github.ref_name }}"
+          tag_name: "${{ steps.version.outputs.TAG }}"
+          name: "Voice Jellyfin ${{ steps.version.outputs.TAG }}"
           generate_release_notes: true
-          files: "voice_jellyfin-${{ github.ref_name }}.zip"
+          files: "voice_jellyfin-${{ steps.version.outputs.TAG }}.zip"
           body: |
-            ## Voice Jellyfin ${{ github.ref_name }}
+            ## Voice Jellyfin ${{ steps.version.outputs.TAG }}
 
             Accessibility-focused voice control for Jellyfin via Home Assistant.
 
@@ -54,5 +89,5 @@ jobs:
             3. Search "Voice Jellyfin" and install
 
             ### Manual Installation
-            Download `voice_jellyfin-${{ github.ref_name }}.zip`, extract, and copy
+            Download `voice_jellyfin-${{ steps.version.outputs.TAG }}.zip`, extract, and copy
             `custom_components/voice_jellyfin/` to your HA `custom_components/` directory.
