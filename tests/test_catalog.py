@@ -35,12 +35,73 @@ def test_duplicate_exact_titles_are_both_returned():
 
 
 def test_short_ambiguous_prefix_still_guarded():
-    """Non-exact short queries with near-tied scores still return nothing."""
+    """Non-exact short queries with near-tied scores still return nothing.
+
+    'up' only covers half of 'Upside'/'Uptown', so neither is a whole-word
+    hit and the ambiguity guard should still suppress both.
+    """
     catalog = _build(
         MediaItem(id="1", name="Upside Down", type="Movie"),
         MediaItem(id="2", name="Uptown Girl", type="Movie"),
     )
     assert catalog.search("up") == []
+
+
+def test_whole_word_prefix_tie_returns_all_matches():
+    """Regression: a library with two 'Bluey ...' titles returned NOTHING for
+    'bluey'. Both scored 0.95 as prefix matches, so the gap was zero and the
+    short-query guard — which only exempted exact (1.0) matches — wiped them.
+
+    These are the real titles from the reported library.
+    """
+    catalog = _build(
+        MediaItem(id="1", name="Bluey Español", type="Series", year=2018),
+        MediaItem(id="2", name="Bluey - Español Canal Oficial", type="Series"),
+    )
+    names = [r.name for r in catalog.search("bluey")]
+    assert len(names) == 2, f"expected both Bluey titles, got {names}"
+    assert "Bluey Español" in names
+
+
+def test_partial_word_prefix_scores_below_whole_word():
+    """'up' cutting into 'Upside' must rank lower than 'bluey' covering the
+    whole first word — that difference is what keeps the guard selective."""
+    partial = _build(MediaItem(id="1", name="Upside Down", type="Movie"))
+    whole = _build(MediaItem(id="1", name="Bluey Español", type="Series"))
+    # A lone partial-word hit still clears _MIN_SCORE, so both return a result;
+    # the distinction only matters when several titles tie.
+    assert [r.name for r in partial.search("up")] == ["Upside Down"]
+    assert [r.name for r in whole.search("bluey")] == ["Bluey Español"]
+
+
+def test_substring_must_start_on_a_word_boundary():
+    """Regression: 'hoe' matched 'Harry Potter and the Order of the Phoenix'
+    because a raw `in` check finds it mid-word inside 'p(hoe)nix'."""
+    catalog = _build(
+        MediaItem(
+            id="1",
+            name="Harry Potter and the Order of the Phoenix",
+            type="Movie",
+        ),
+    )
+    assert catalog.search("hoe") == []
+
+
+def test_word_boundary_substring_still_matches_real_words():
+    """The boundary rule must not break legitimate mid-title word matches."""
+    catalog = _build(
+        MediaItem(id="1", name="Harry Potter and the Goblet of Fire", type="Movie"),
+    )
+    assert [r.name for r in catalog.search("goblet")] == [
+        "Harry Potter and the Goblet of Fire"
+    ]
+
+
+def test_word_prefix_substring_still_matches():
+    """'aveng' should still reach 'The Avengers' — the boundary check anchors
+    the start of the query, not both ends, so word prefixes keep working."""
+    catalog = _build(MediaItem(id="1", name="The Avengers", type="Movie"))
+    assert [r.name for r in catalog.search("aveng")] == ["The Avengers"]
 
 
 def test_empty_query_without_filters_matches_nothing():
