@@ -604,13 +604,18 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                         self._test_results = f'🗣 "{command_text}"\n→ {reply or "(no speech reply — check the TV/Now Playing sensor)"}'
                     except Exception as exc:
                         self._test_results = f"✗ Error: {exc}"
-            elif not query:
-                self._test_results = "⚠ Enter a query first."
+            elif not command_text:
+                self._test_results = "⚠ Enter a query or pick a quick command first."
             elif not coordinator or not coordinator.jellyfin_client:
                 self._test_results = "✗ Jellyfin client not available."
             else:
                 from .jellyfin.query_parser import parse_query as _parse
-                pq = _parse(query)
+                # command_text covers both a typed query AND a picked preset —
+                # previously this used the raw `query` field directly, so
+                # picking a preset and leaving action on its default "Search"
+                # ignored the preset entirely and complained the query was
+                # empty, even though a quick command had been selected.
+                pq = _parse(command_text)
                 # type_filter from UI overrides parser
                 effective_type = type_filter or pq.type_filter
                 try:
@@ -622,13 +627,16 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                         raw_query=pq.raw,
                     )
                     if not items:
-                        self._test_results = f'No results for "{query}".'
+                        self._test_results = f'No results for "{command_text}".'
                     elif action == "play":
                         item = items[0]
                         from .jellyfin.session_select import pick_session
                         sessions = await coordinator.jellyfin_client.async_get_sessions()
                         session = pick_session(
-                            sessions, device_filter=getattr(coordinator, "_target_device", None), require_item=False
+                            sessions,
+                            device_filter=getattr(coordinator, "_target_device", None),
+                            require_item=False,
+                            user_id=getattr(coordinator.jellyfin_client._auth, "user_id", None) if coordinator.jellyfin_client else None,
                         )
                         if not session:
                             self._test_results = "✗ No active Jellyfin session found."
@@ -652,7 +660,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                         parsed_note = ""
                         if pq.type_filter or pq.year or pq.genre_hint:
                             parsed_note = f"\n(parsed: type={pq.type_filter} year={pq.year} genre={pq.genre_hint})"
-                        self._test_results = f"{len(items)} result(s) for \"{query}\"{parsed_note}:\n" + "\n".join(lines)
+                        self._test_results = f"{len(items)} result(s) for \"{command_text}\"{parsed_note}:\n" + "\n".join(lines)
                 except Exception as exc:
                     self._test_results = f"✗ Error: {exc}"
 

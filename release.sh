@@ -74,10 +74,24 @@ git add "$MANIFEST" "$CHANGELOG"
 git commit -m "chore: release v$VERSION"
 git tag "v$VERSION"
 
+# ── 6. Push branch + tag ──────────────────────────────────────────────────────
+# The tag push is what actually matters: .github/workflows/release.yml triggers
+# on any "v*" tag push and creates the GitHub Release automatically. A local-only
+# tag (commit + `git tag` with no push) is invisible to GitHub and to HACS —
+# that's exactly how v0.2.0 went stale: it was tagged locally but never pushed,
+# so no Release ever got created and HACS never saw an update.
+BRANCH="$(git branch --show-current)"
+echo "Pushing $BRANCH and tag v$VERSION..."
+git push origin "$BRANCH"
+git push origin "v$VERSION"
+
 echo ""
 echo "✓ Released v$VERSION"
 echo ""
-echo "Push to GitHub with:"
-echo "  git push origin main && git push origin v$VERSION"
+echo "GitHub Actions will build the release now:"
+echo "  https://github.com/dez011/hass-voice-jellyfin/actions"
+echo "Release page (live once the workflow finishes, usually <1 min):"
+echo "  https://github.com/dez011/hass-voice-jellyfin/releases/tag/v$VERSION"
 echo ""
-echo "The GitHub Actions release workflow will trigger on the tag push."
+echo "Then in Home Assistant: HACS → Voice Jellyfin → ⋮ → Redownload, then"
+echo "restart HA Core to load the new code."

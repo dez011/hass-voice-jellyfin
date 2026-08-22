@@ -18,6 +18,7 @@ def pick_session(
     device_filter: Optional[str] = None,
     require_item: bool = True,
     paused: Optional[bool] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[PlaybackSession]:
     """Return the best session to target, or None.
 
@@ -31,12 +32,20 @@ def pick_session(
     :param require_item: Only consider sessions with an active NowPlayingItem.
     :param paused: None = don't care, True = only paused sessions,
         False = only actively-playing sessions.
+    :param user_id: Jellyfin user id (PlaybackSession.user_id) to restrict to.
+        Without this, commands land on whichever session the API lists
+        first — fine for a single-user household, ambiguous once more than
+        one person has a session open. Combines with device_filter (both
+        must match when both are set).
     """
     candidates = [s for s in sessions if (not require_item or s.item)]
     if paused is True:
         candidates = [s for s in candidates if s.is_paused]
     elif paused is False:
         candidates = [s for s in candidates if not s.is_paused]
+
+    if user_id:
+        candidates = [s for s in candidates if s.user_id == user_id]
 
     needle = (device_filter or "").strip().lower()
     if needle:
@@ -52,6 +61,7 @@ def pick_session(
 def pick_now_playing(
     sessions: list[PlaybackSession],
     device_filter: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[PlaybackSession]:
     """Prefer an actively-playing session; fall back to a paused one.
 
@@ -59,6 +69,6 @@ def pick_now_playing(
     a reasonable answer if nothing is actively playing.
     """
     return (
-        pick_session(sessions, device_filter, require_item=True, paused=False)
-        or pick_session(sessions, device_filter, require_item=True, paused=None)
+        pick_session(sessions, device_filter, require_item=True, paused=False, user_id=user_id)
+        or pick_session(sessions, device_filter, require_item=True, paused=None, user_id=user_id)
     )

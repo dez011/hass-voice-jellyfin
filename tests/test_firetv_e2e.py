@@ -49,6 +49,7 @@ class FireTVHarness:
         entity_id: str = FIRE_TV_ENTITY,
         entry_id: str = "e2e-entry",
         shared_jellyfin=None,
+        default_user: str = "",
     ):
         self.adb_commands: list[str] = []
         self.service_calls: list[tuple[str, str, dict]] = []
@@ -79,6 +80,13 @@ class FireTVHarness:
         entry.data = {
             **ENTRY_DATA, "ai_enabled": ai_enabled,
             "android_tv_entity": entity_id, "jellyfin_target_device": target_device,
+            # ENTRY_DATA's "jellyfin_default_user" is a fixed test fixture
+            # value (only meaningful for auth before user-scoped session
+            # targeting existed). Override to blank by default so harnesses
+            # built for device-targeting tests aren't accidentally also
+            # user-filtered; tests of user targeting pass default_user
+            # explicitly.
+            "jellyfin_default_user": default_user,
         }
         entry.options = {}
         self.entry = entry
@@ -454,6 +462,26 @@ async def test_untargeted_tv_without_device_filter_still_works_alone():
     shared_jf, sess_a, sess_b = _shared_two_device_server()
     tv = FireTVHarness(shared_jellyfin=shared_jf)  # no target_device
     await tv.say("pause")
+    shared_jf.async_pause.assert_awaited_once_with("sess-living-room")
+
+
+@pytest.mark.asyncio
+async def test_default_user_scopes_commands_to_that_persons_session():
+    """Two people share one Jellyfin server/device pool with no per-TV device
+    targeting configured — commands must still land on the configured
+    person's own session, not whichever session /Sessions lists first.
+    """
+    shared_jf, sess_a, sess_b = _shared_two_device_server()
+    # No target_device for either — only jellyfin_default_user distinguishes
+    # who each entry's commands should act on.
+    person_1 = FireTVHarness(entry_id="entry-1", shared_jellyfin=shared_jf, default_user="user-1")
+    person_2 = FireTVHarness(entry_id="entry-2", shared_jellyfin=shared_jf, default_user="user-2")
+
+    await person_2.say("pause")
+    shared_jf.async_pause.assert_awaited_once_with("sess-bedroom")
+
+    shared_jf.async_pause.reset_mock()
+    await person_1.say("pause")
     shared_jf.async_pause.assert_awaited_once_with("sess-living-room")
 
 

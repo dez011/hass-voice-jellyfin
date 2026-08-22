@@ -270,6 +270,11 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             bitrate_presets=BITRATE_PRESETS_KBPS,
             current_bitrate_idx=self._bitrate_idx,
             device_filter=self._target_device,
+            # Same value already used to scope resume/favorites auth (line
+            # ~87) — reused here so general commands (play/pause/next/etc.)
+            # also target that person's session instead of whichever session
+            # the Jellyfin API happens to list first.
+            user_filter=merged_config.get(CONF_JELLYFIN_DEFAULT_USER) or None,
         )
         result = await router.async_route(text, self.ai_provider, self.ai_context, ai_enabled=ai_enabled)
         if result.media_title:

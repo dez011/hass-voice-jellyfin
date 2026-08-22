@@ -110,6 +110,7 @@ class IntentRouter:
         bitrate_presets: Optional[list[int]] = None,
         current_bitrate_idx: int = -1,
         device_filter: Optional[str] = None,
+        user_filter: Optional[str] = None,
     ) -> None:
         self._jellyfin = jellyfin
         self._tv = tv
@@ -120,6 +121,11 @@ class IntentRouter:
         # commands from this entry target ITS TV in a multi-TV household,
         # not just whichever session the Jellyfin API happens to list first.
         self._device_filter = (device_filter or "").strip() or None
+        # Jellyfin user id (from CONF_JELLYFIN_DEFAULT_USER) — restricts
+        # session targeting to that person's session specifically. Without
+        # this, commands land on whichever session /Sessions lists first,
+        # regardless of who it belongs to.
+        self._user_filter = (user_filter or "").strip() or None
         from ..const import BITRATE_PRESETS_KBPS
         self._bitrate_presets = bitrate_presets or BITRATE_PRESETS_KBPS
         self._bitrate_idx = current_bitrate_idx  # -1 = auto (no cap)
@@ -131,10 +137,13 @@ class IntentRouter:
         self, sessions: list[Any], require_item: bool = True, paused: Optional[bool] = None
     ) -> Optional[Any]:
         """Pick the session this entry's commands should target."""
-        return pick_session(sessions, device_filter=self._device_filter, require_item=require_item, paused=paused)
+        return pick_session(
+            sessions, device_filter=self._device_filter, require_item=require_item,
+            paused=paused, user_id=self._user_filter,
+        )
 
     def _pick_now_playing(self, sessions: list[Any]) -> Optional[Any]:
-        return pick_now_playing(sessions, device_filter=self._device_filter)
+        return pick_now_playing(sessions, device_filter=self._device_filter, user_id=self._user_filter)
 
     def _no_session_reply(self) -> str:
         """Speech for 'nothing to act on' — names the target TV when one is
