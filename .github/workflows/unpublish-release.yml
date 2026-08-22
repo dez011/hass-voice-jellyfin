@@ -1,0 +1,68 @@
+name: Unpublish Release
+
+# Removes a published GitHub Release while KEEPING its git tag.
+#
+# HACS installs from the default branch only while a repo has no releases.
+# If one gets published by accident, HACS pins to it and stops following
+# latest-commit. Deleting the release restores branch tracking; the tag
+# survives so it still works as a "this commit worked" bookmark.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag whose release should be unpublished, e.g. v0.2.0"
+        required: true
+      delete_tag:
+        description: "Also delete the git tag itself"
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  unpublish:
+    name: Delete release, keep tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Delete the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # No --cleanup-tag, so the git tag is left in place.
+            gh release delete "$TAG" --yes
+            echo "Deleted release $TAG (git tag kept)."
+          else
+            echo "No release found for $TAG — nothing to delete."
+          fi
+
+      - name: Delete the tag too (only if requested)
+        if: ${{ inputs.delete_tag }}
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            git push origin ":refs/tags/${TAG}"
+            echo "Deleted tag ${TAG}."
+          else
+            echo "Tag ${TAG} not on origin — nothing to delete."
+          fi
+
+      - name: Report remaining releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COUNT=$(gh release list --limit 100 | wc -l)
+          echo "Releases remaining: ${COUNT}"
+          if [ "${COUNT}" -eq 0 ]; then
+            echo "None left — HACS will track the default branch again."
+          fi

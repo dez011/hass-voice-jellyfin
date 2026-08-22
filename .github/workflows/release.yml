@@ -1,11 +1,13 @@
 name: Release
 
+# Deliberately NOT triggered by pushing a v* tag.
+#
+# HACS installs from the default branch only while a repo has no published
+# releases; the moment one exists it pins to that release instead. Tags here
+# are used as plain bookmarks for "this commit worked", so auto-publishing a
+# release from every tag would silently switch HACS off latest-commit
+# tracking. Cutting a release is therefore an explicit, manual choice.
 on:
-  push:
-    tags:
-      - "v*"
-  # Lets a release be cut from the Actions tab without pushing a tag by hand.
-  # The runner's GITHUB_TOKEN can write refs, so CI creates the tag itself.
   workflow_dispatch:
     inputs:
       version:
@@ -29,21 +31,16 @@ jobs:
       - name: Resolve version
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
-            if [ -z "$VERSION" ]; then
-              VERSION=$(python3 -c "import json; print(json.load(open('custom_components/voice_jellyfin/manifest.json'))['version'])")
-            fi
-            VERSION="${VERSION#v}"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(python3 -c "import json; print(json.load(open('custom_components/voice_jellyfin/manifest.json'))['version'])")
           fi
+          VERSION="${VERSION#v}"
           echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "TAG=v${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Releasing v${VERSION}"
 
       - name: Create tag if it does not exist
-        if: github.event_name == 'workflow_dispatch'
         run: |
           TAG="${{ steps.version.outputs.TAG }}"
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
