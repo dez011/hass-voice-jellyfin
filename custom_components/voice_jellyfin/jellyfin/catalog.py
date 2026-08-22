@@ -13,6 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 
 _MIN_SCORE = 0.5        # reject anything below this
 _MIN_SCORE_GAP = 0.15  # top match must beat #2 by this much for short queries
+_TRUSTED_SCORE = 0.9   # at or above this, a tie is real — never wipe the results
 
 _STOP_WORDS = frozenset({
     "the", "a", "an", "of", "and", "in", "on", "at", "to", "is", "s",
@@ -96,14 +97,19 @@ class JellyfinCatalog:
         scored.sort(key=lambda x: x[0], reverse=True)
 
         # For short queries (≤3 chars or single token) require the top hit to
-        # clearly dominate the second — prevents "Up" matching "Upstairs" etc.
-        # An exact title match (score 1.0) is always trusted, so "Bluey" still
-        # wins even when "Bluey Espanol" sits right behind it.
+        # clearly dominate the second — prevents "up" matching "Upside Down".
+        #
+        # Only low-confidence matches are wiped. Anything scoring >= _TRUSTED
+        # matched whole words, so a tie there means several titles genuinely
+        # start with what was asked for and all of them should come back.
+        # Trusting only exact (1.0) matches meant a library holding both
+        # "Bluey Espanol" and "Bluey - Espanol Canal Oficial" returned nothing
+        # at all for "bluey": two whole-word prefix hits, zero gap, both wiped.
         short_query = len(query_lower.replace(" ", "")) <= 3 or len(query_tokens) <= 1
         if (
             short_query
             and len(scored) >= 2
-            and scored[0][0] < 1.0
+            and scored[0][0] < _TRUSTED_SCORE
             and (scored[0][0] - scored[1][0]) < _MIN_SCORE_GAP
         ):
             scored = []
@@ -127,16 +133,23 @@ def _score(query_lower: str, query_tokens: frozenset[str], entry: _Entry) -> flo
     if query_lower == name:
         return 1.0
 
-    # "bluey" matches "bluey espanol" — query is a prefix of the title
+    # Query is a prefix of the title. Whether that is trustworthy depends on
+    # whether it covers whole words: "bluey" is all of "Bluey Espanol"'s first
+    # word, but "up" is only half of "Upside Down"'s. The first deserves to be
+    # returned even when several titles tie; the second is the genuinely
+    # ambiguous case _MIN_SCORE_GAP exists to suppress, so it scores lower and
+    # stays subject to that guard.
     if name.startswith(query_lower):
-        return 0.95
+        return 0.95 if not name[len(query_lower)].isalnum() else 0.8
 
     # "bluey espanol" matches "bluey" — title is a prefix of the query
     if query_lower.startswith(name):
         return 0.9
 
-    # substring anywhere
-    if query_lower in name:
+    # Substring, but only where the query starts on a word boundary. A raw
+    # `in` check matched any mid-word run of letters — "hoe" is inside
+    # "p(hoe)nix", so it pulled up Order of the Phoenix.
+    if re.search(r"(?:^|\W)" + re.escape(query_lower), name):
         return 0.85
 
     # token overlap (handles word-order differences, partial word matches)
