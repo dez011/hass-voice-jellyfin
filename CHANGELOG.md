@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.0] — 2026-08-23
+
+- Add Control Method toggle (Auto / Jellyfin API / TV-ADB) switchable live from the dashboard; route commands over ADB when the Jellyfin client cannot be remote controlled
+
+
 ## [0.4.0] — 2026-08-23
 
 - Report when a Jellyfin client cannot be remote controlled instead of falsely reporting success; fix release version drift between manifest and const

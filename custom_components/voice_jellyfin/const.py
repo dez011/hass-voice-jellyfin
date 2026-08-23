@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "voice_jellyfin"
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 # Config entry keys
 CONF_JELLYFIN_URL = "jellyfin_url"
