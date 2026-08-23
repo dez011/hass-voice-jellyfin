@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.7] — 2026-08-23
+
+- Fix buttons doing nothing: device filter now soft-preference (falls back when configured device has no sessions)
+- add system-session stripping so HA internal Hass sessions are never targeted
+
+
 ## [0.3.6] — 2026-08-23
 
 - Add diagnostic WARNING log on every command so session-not-found failures show in HA logs
