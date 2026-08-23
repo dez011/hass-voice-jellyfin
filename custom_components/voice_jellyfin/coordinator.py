@@ -159,8 +159,8 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "paused": now.is_paused,
                     }
 
-                # Find the configured user's session (any state, not just playing)
-                # so we can show who/where we're targeting even when idle.
+                # Find the session that would be targeted by the next command.
+                # require_item=False so it shows even when nothing is playing.
                 user_session = pick_session(
                     sessions, device_filter=self._target_device,
                     require_item=False, user_id=configured_uid,
@@ -170,13 +170,33 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     f"{user_session.device_name} — {user_session.client}"
                     if user_session else None
                 )
+                remote_controllable = (
+                    user_session.supports_remote_control if user_session else False
+                )
+
+                # Real user sessions for the "Sessions" sensor
+                real_sessions = [
+                    {
+                        "id": s.id,
+                        "user": s.user_name or "—",
+                        "device": s.device_name,
+                        "client": s.client,
+                        "now_playing": s.item.name if s.item else None,
+                        "paused": s.is_paused if s.item else None,
+                        "remote_control": s.supports_remote_control,
+                    }
+                    for s in sessions
+                    if s.user_id and s.user_id.replace("0", "")
+                ]
 
                 return {
                     "connected": True,
                     "sessions": sessions,
+                    "real_sessions": real_sessions,
                     "now_playing": now_playing,
                     "active_user": active_user,
                     "active_session": active_session,
+                    "remote_controllable": remote_controllable,
                     "navigation_active": self.navigation_mode.is_active if self.navigation_mode else False,
                     "last_command": self._last_command,
                     "last_media": self._last_media,

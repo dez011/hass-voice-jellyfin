@@ -71,6 +71,7 @@ class PlaybackSession:
     device_name: str = ""   # Human-readable device name set in the client app
     device_id: str = ""
     user_name: str = ""
+    supports_remote_control: bool = False  # False = buttons will be ignored by this client
 
     @property
     def position_seconds(self) -> float:
@@ -86,6 +87,7 @@ class PlaybackSession:
             item = MediaItem.from_api(now_playing, base_url)
 
         play_state = data.get("PlayState", {})
+        caps = data.get("Capabilities", {}) or {}
         return cls(
             id=data.get("Id", ""),
             user_id=data.get("UserId", ""),
@@ -96,4 +98,5 @@ class PlaybackSession:
             device_name=data.get("DeviceName", ""),
             device_id=data.get("DeviceId", ""),
             user_name=data.get("UserName", ""),
+            supports_remote_control=bool(caps.get("SupportsMediaControl", False)),
         )

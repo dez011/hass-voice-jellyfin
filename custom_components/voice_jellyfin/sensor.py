@@ -26,6 +26,7 @@ async def async_setup_entry(
         VoiceJellyfinNowPlayingSensor(coordinator),
         VoiceJellyfinActiveUserSensor(coordinator),
         VoiceJellyfinActiveSessionSensor(coordinator),
+        VoiceJellyfinSessionsSensor(coordinator),
     ])
 
 
@@ -136,7 +137,7 @@ class VoiceJellyfinActiveUserSensor(VoiceJellyfinEntity, SensorEntity):
 
 
 class VoiceJellyfinActiveSessionSensor(VoiceJellyfinEntity, SensorEntity):
-    """The device + client app for the configured user's current session."""
+    """The session that will be targeted by the next command."""
 
     _attr_name = "Active Session"
     _attr_icon = "mdi:television-account"
@@ -146,4 +147,42 @@ class VoiceJellyfinActiveSessionSensor(VoiceJellyfinEntity, SensorEntity):
 
     @property
     def native_value(self) -> str:
-        return (self.coordinator.data or {}).get("active_session") or "No session"
+        data = self.coordinator.data or {}
+        session = data.get("active_session")
+        if not session:
+            return "No session"
+        controllable = data.get("remote_controllable", False)
+        return f"{session} {'✓' if controllable else '⚠ no remote control'}"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        data = self.coordinator.data or {}
+        return {
+            "remote_controllable": data.get("remote_controllable", False),
+            "remote_control_note": (
+                "Client supports remote control — buttons will work"
+                if data.get("remote_controllable")
+                else "Client does NOT support remote control (e.g. Plezy). "
+                     "Use the official Jellyfin app or Infuse."
+            ),
+        }
+
+
+class VoiceJellyfinSessionsSensor(VoiceJellyfinEntity, SensorEntity):
+    """All real user sessions and their remote control status."""
+
+    _attr_name = "Sessions"
+    _attr_icon = "mdi:account-multiple"
+
+    def __init__(self, coordinator: VoiceJellyfinCoordinator) -> None:
+        super().__init__(coordinator, "sessions")
+
+    @property
+    def native_value(self) -> str:
+        sessions = (self.coordinator.data or {}).get("real_sessions", [])
+        return f"{len(sessions)} session(s)"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        sessions = (self.coordinator.data or {}).get("real_sessions", [])
+        return {"sessions": sessions}
