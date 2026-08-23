@@ -685,14 +685,27 @@ class IntentRouter:
 
     async def _active_session_id(self, require_item: bool = True) -> Optional[str]:
         if not self._jellyfin:
+            _LOGGER.warning("voice_jellyfin: _active_session_id called but no Jellyfin client")
             return None
         sessions = await self._jellyfin.async_get_sessions()
+        _LOGGER.warning(
+            "voice_jellyfin: _active_session_id — %d session(s) found, "
+            "user_filter=%r, device_filter=%r, require_item=%s | sessions: %s",
+            len(sessions),
+            self._user_filter,
+            self._device_filter,
+            require_item,
+            [
+                f"id={s.id[:8]} user={s.user_id[:8] if s.user_id else 'none'} "
+                f"name={s.user_name!r} device={s.device_name!r} "
+                f"item={'yes' if s.item else 'no'}"
+                for s in sessions
+            ],
+        )
         active = self._pick(sessions, require_item=require_item)
         if not active:
             _LOGGER.warning(
-                "voice_jellyfin: no active Jellyfin session found "
-                "(user_filter=%r, require_item=%s, total_sessions=%d)",
-                self._user_filter, require_item, len(sessions),
+                "voice_jellyfin: no session matched filters — command will be ignored",
             )
         return active.id if active else None
 
