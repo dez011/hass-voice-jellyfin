@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.8] — 2026-08-23
+
+- Surface remote control support in Active Session sensor; add Sessions sensor showing all user sessions; fix was Plezy not supporting Jellyfin remote control
+
+
 ## [0.3.7] — 2026-08-23
 
 - Fix buttons doing nothing: device filter now soft-preference (falls back when configured device has no sessions)
