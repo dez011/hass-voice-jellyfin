@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.3] — 2026-08-22
+
+- Add Up/Down/Left/Right/Select d-pad navigation buttons to dashboard entities
+
+
 ## [0.3.2] — 2026-08-22
 
 - Add dashboard button entities (Pause
