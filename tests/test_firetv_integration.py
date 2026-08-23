@@ -416,6 +416,7 @@ class TestIntentRouterFireTV:
             jellyfin_client.async_play = AsyncMock()
             jellyfin_client.async_pause = AsyncMock()
             jellyfin_client.async_stop = AsyncMock()
+            jellyfin_client.async_send_general_command = AsyncMock()
             jellyfin_client.async_search = AsyncMock(return_value=[
                 MediaItem(id="item-002", name="The Dark Knight", type="Movie")
             ])
@@ -440,9 +441,12 @@ class TestIntentRouterFireTV:
 
     @pytest.mark.asyncio
     async def test_navigate_up_sends_key_via_androidtv(self):
-        """NAVIGATE UP intent reaches androidtv.adb_command with keycode 19."""
+        """NAVIGATE UP intent sends MoveUp via Jellyfin general command API."""
         hass = _hass_with_androidtv()
+        jf = None  # will use default mock from _make_router
         router = self._make_router(hass)
+        # grab the jellyfin mock that _make_router created
+        jf_mock = router._jellyfin
 
         from custom_components.voice_jellyfin.ai.context import AIContext
         from custom_components.voice_jellyfin.ai.base import AIProvider
@@ -456,16 +460,14 @@ class TestIntentRouterFireTV:
 
         await router.async_route("go up", _NavProvider(), AIContext(), ai_enabled=True)
 
-        calls = hass.services.async_call.call_args_list
-        key_calls = [c for c in calls if c[0][0] == "androidtv" and "keyevent" in c[0][2].get("command", "")]
-        assert len(key_calls) >= 1
-        assert "19" in key_calls[0][0][2]["command"]  # keycode for UP
+        jf_mock.async_send_general_command.assert_awaited_with("sess-001", "MoveUp")
 
     @pytest.mark.asyncio
     async def test_navigate_select_sends_keycode_23(self):
-        """NAVIGATE SELECT → keycode 23 (DPAD_CENTER)."""
+        """NAVIGATE SELECT → Jellyfin general command 'Select'."""
         hass = _hass_with_androidtv()
         router = self._make_router(hass)
+        jf_mock = router._jellyfin
 
         from custom_components.voice_jellyfin.ai.context import AIContext
         import json
@@ -478,15 +480,14 @@ class TestIntentRouterFireTV:
 
         await router.async_route("select", _SelectProvider(), AIContext(), ai_enabled=True)
 
-        calls = hass.services.async_call.call_args_list
-        key_calls = [c for c in calls if c[0][0] == "androidtv" and "keyevent 23" in c[0][2].get("command", "")]
-        assert len(key_calls) >= 1
+        jf_mock.async_send_general_command.assert_awaited_with("sess-001", "Select")
 
     @pytest.mark.asyncio
     async def test_scroll_down_three_times(self):
-        """SCROLL down amount=3 sends 3 separate key events."""
+        """SCROLL down amount=3 sends 3 MoveDown Jellyfin general commands."""
         hass = _hass_with_androidtv()
         router = self._make_router(hass)
+        jf_mock = router._jellyfin
 
         from custom_components.voice_jellyfin.ai.context import AIContext
         import json
@@ -499,9 +500,11 @@ class TestIntentRouterFireTV:
 
         await router.async_route("scroll down 3", _ScrollProvider(), AIContext(), ai_enabled=True)
 
-        calls = hass.services.async_call.call_args_list
-        key_calls = [c for c in calls if c[0][0] == "androidtv" and "keyevent" in c[0][2].get("command", "")]
-        assert len(key_calls) == 3
+        move_down_calls = [
+            c for c in jf_mock.async_send_general_command.await_args_list
+            if c[0] == ("sess-001", "MoveDown")
+        ]
+        assert len(move_down_calls) == 3
 
     @pytest.mark.asyncio
     async def test_scroll_with_non_integer_amount_defaults_to_1(self):
@@ -519,10 +522,12 @@ class TestIntentRouterFireTV:
                 return json.dumps({"intent": "SCROLL", "params": {"direction": "down", "amount": "a lot"}, "speech": ""})
 
         result = await router.async_route("scroll down a lot", _BadAmountProvider(), AIContext(), ai_enabled=True)
-        # Should not crash, should send exactly 1 key event
-        calls = hass.services.async_call.call_args_list
-        key_calls = [c for c in calls if c[0][0] == "androidtv" and "keyevent" in c[0][2].get("command", "")]
-        assert len(key_calls) == 1
+        # Should not crash, should send exactly 1 MoveDown command
+        move_down_calls = [
+            c for c in router._jellyfin.async_send_general_command.await_args_list
+            if c[0] == ("sess-001", "MoveDown")
+        ]
+        assert len(move_down_calls) == 1
 
     @pytest.mark.asyncio
     async def test_open_app_intent_calls_launch_app(self):
@@ -573,31 +578,29 @@ class TestIntentRouterFireTV:
 
     @pytest.mark.asyncio
     async def test_rule_based_navigate_up_without_ai(self):
-        """Without AI, rule-based routing sends UP key for 'go up'."""
+        """Without AI, rule-based routing sends MoveUp via Jellyfin API."""
         hass = _hass_with_androidtv()
         router = self._make_router(hass)
+        jf_mock = router._jellyfin
 
         from custom_components.voice_jellyfin.ai.context import AIContext
 
         await router.async_route("go up", None, AIContext(), ai_enabled=False)
 
-        calls = hass.services.async_call.call_args_list
-        key_calls = [c for c in calls if c[0][0] == "androidtv" and "19" in c[0][2].get("command", "")]
-        assert len(key_calls) >= 1
+        jf_mock.async_send_general_command.assert_awaited_with("sess-001", "MoveUp")
 
     @pytest.mark.asyncio
     async def test_rule_based_navigate_back_without_ai(self):
-        """Without AI, 'go back' sends BACK key (keycode 4)."""
+        """Without AI, 'go back' sends Back via Jellyfin API."""
         hass = _hass_with_androidtv()
         router = self._make_router(hass)
+        jf_mock = router._jellyfin
 
         from custom_components.voice_jellyfin.ai.context import AIContext
 
         await router.async_route("go back", None, AIContext(), ai_enabled=False)
 
-        calls = hass.services.async_call.call_args_list
-        key_calls = [c for c in calls if c[0][0] == "androidtv" and "4" in c[0][2].get("command", "")]
-        assert len(key_calls) >= 1
+        jf_mock.async_send_general_command.assert_awaited_with("sess-001", "Back")
 
     @pytest.mark.asyncio
     async def test_pause_targets_active_session_not_idle(self):
