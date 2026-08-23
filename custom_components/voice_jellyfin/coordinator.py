@@ -143,9 +143,11 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch latest status from Jellyfin."""
         try:
             if self.jellyfin_client:
-                from .jellyfin.session_select import pick_now_playing
+                from .jellyfin.session_select import pick_now_playing, pick_session
                 sessions = await self.jellyfin_client.async_get_sessions()
                 self._connected = True
+                configured_uid = self.jellyfin_client._auth.user_id or None
+
                 now = pick_now_playing(sessions, device_filter=self._target_device)
                 now_playing = None
                 if now and now.item:
@@ -156,10 +158,25 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "user": now.user_name or None,
                         "paused": now.is_paused,
                     }
+
+                # Find the configured user's session (any state, not just playing)
+                # so we can show who/where we're targeting even when idle.
+                user_session = pick_session(
+                    sessions, device_filter=self._target_device,
+                    require_item=False, user_id=configured_uid,
+                )
+                active_user = user_session.user_name if user_session else None
+                active_session = (
+                    f"{user_session.device_name} — {user_session.client}"
+                    if user_session else None
+                )
+
                 return {
                     "connected": True,
                     "sessions": sessions,
                     "now_playing": now_playing,
+                    "active_user": active_user,
+                    "active_session": active_session,
                     "navigation_active": self.navigation_mode.is_active if self.navigation_mode else False,
                     "last_command": self._last_command,
                     "last_media": self._last_media,

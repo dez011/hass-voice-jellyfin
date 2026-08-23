@@ -24,6 +24,8 @@ async def async_setup_entry(
         VoiceJellyfinLastCommandSensor(coordinator),
         VoiceJellyfinLastMediaSensor(coordinator),
         VoiceJellyfinNowPlayingSensor(coordinator),
+        VoiceJellyfinActiveUserSensor(coordinator),
+        VoiceJellyfinActiveSessionSensor(coordinator),
     ])
 
 
@@ -117,3 +119,31 @@ class VoiceJellyfinNowPlayingSensor(VoiceJellyfinEntity, SensorEntity):
             "user": now.get("user") or "Unknown",
             "paused": now.get("paused", False),
         }
+
+
+class VoiceJellyfinActiveUserSensor(VoiceJellyfinEntity, SensorEntity):
+    """The Jellyfin username this entry is configured to control."""
+
+    _attr_name = "Active User"
+    _attr_icon = "mdi:account"
+
+    def __init__(self, coordinator: VoiceJellyfinCoordinator) -> None:
+        super().__init__(coordinator, "active_user")
+
+    @property
+    def native_value(self) -> str:
+        return (self.coordinator.data or {}).get("active_user") or "Not configured"
+
+
+class VoiceJellyfinActiveSessionSensor(VoiceJellyfinEntity, SensorEntity):
+    """The device + client app for the configured user's current session."""
+
+    _attr_name = "Active Session"
+    _attr_icon = "mdi:television-account"
+
+    def __init__(self, coordinator: VoiceJellyfinCoordinator) -> None:
+        super().__init__(coordinator, "active_session")
+
+    @property
+    def native_value(self) -> str:
+        return (self.coordinator.data or {}).get("active_session") or "No session"
