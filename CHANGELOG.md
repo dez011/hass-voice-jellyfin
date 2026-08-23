@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.4] — 2026-08-22
+
+- Add Active User sensor (configured Jellyfin username)
+- add Active Session sensor (device + client app for that user)
+
+
 ## [0.3.3] — 2026-08-22
 
 - Add Up/Down/Left/Right/Select d-pad navigation buttons to dashboard entities
