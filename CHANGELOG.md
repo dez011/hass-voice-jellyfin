@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.9] — 2026-08-23
+
+- Broadcast nav/playback commands to all sessions; fix button delivery when configured device has no active session
+
+
 ## [0.3.8] — 2026-08-23
 
 - Surface remote control support in Active Session sensor; add Sessions sensor showing all user sessions; fix was Plezy not supporting Jellyfin remote control
