@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.5] — 2026-08-22
+
+- Fix buttons doing nothing: nav keys now use Jellyfin general command API (no ADB needed)
+- pause/stop warn in logs when no session found
+
+
 ## [0.3.4] — 2026-08-22
 
 - Add Active User sensor (configured Jellyfin username)
