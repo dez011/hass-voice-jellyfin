@@ -18,6 +18,8 @@ from .const import (
     CONF_JELLYFIN_API_KEY,
     CONF_JELLYFIN_DEFAULT_USER,
     CONF_JELLYFIN_TARGET_DEVICE,
+    CONF_CONTROL_METHOD,
+    DEFAULT_CONTROL_METHOD,
     CONF_JELLYFIN_VERIFY_SSL,
     CONF_AI_ENABLED,
     CONF_AI_PROVIDER,
@@ -69,6 +71,10 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # this entry's commands target its own TV, not just whichever
         # session Jellyfin lists first. Blank = single-TV behavior.
         self._target_device: str = ""
+        # Transport for playback/nav commands. Held on the coordinator rather
+        # than read from config per command so the Control Method select can
+        # switch it live, without a reconfigure/restart.
+        self.control_method: str = DEFAULT_CONTROL_METHOD
 
     async def async_setup(self) -> None:
         """Initialize all sub-components."""
@@ -88,6 +94,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.jellyfin_client = JellyfinClient(auth, verify_ssl=config.get(CONF_JELLYFIN_VERIFY_SSL, True), hass=self.hass)
         self._target_device = str(config.get(CONF_JELLYFIN_TARGET_DEVICE) or "")
+        self.control_method = config.get(CONF_CONTROL_METHOD) or DEFAULT_CONTROL_METHOD
         try:
             await self.jellyfin_client.async_connect()
             self._connected = True
@@ -202,6 +209,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "last_media": self._last_media,
                     "current_provider": self._current_provider_label,
                     "current_device": self._current_device,
+                    "control_method": self.control_method,
                 }
         except Exception as err:
             self._connected = False
@@ -312,6 +320,7 @@ class VoiceJellyfinCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # also target that person's session instead of whichever session
             # the Jellyfin API happens to list first.
             user_filter=merged_config.get(CONF_JELLYFIN_DEFAULT_USER) or None,
+            control_method=self.control_method,
         )
         result = await router.async_route(text, self.ai_provider, self.ai_context, ai_enabled=ai_enabled)
         if result.media_title:

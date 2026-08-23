@@ -43,7 +43,7 @@ def _provider_returning(payload: dict):
 async def test_play_intent_calls_async_play():
     """PLAY intent should search and then play the first result."""
     item = MediaItem(id="item-001", name="Inception", type="Movie")
-    session = PlaybackSession(id="sess-001", user_id="user-001", item=item)
+    session = PlaybackSession(id="sess-001", user_id="user-001", item=item, supports_remote_control=True)
 
     jellyfin = MagicMock()
     jellyfin.async_search = AsyncMock(return_value=[item])
@@ -158,7 +158,7 @@ async def test_filter_intent_updates_context():
 async def test_resume_intent_unpauses_paused_session():
     """RESUME should unpause a currently paused session rather than starting fresh."""
     item = MediaItem(id="ep-001", name="Breaking Bad S01E01", type="Episode")
-    session = PlaybackSession(id="sess-001", user_id="user-001", item=item, is_paused=True)
+    session = PlaybackSession(id="sess-001", user_id="user-001", item=item, is_paused=True, supports_remote_control=True)
 
     jellyfin = MagicMock()
     jellyfin.async_get_sessions = AsyncMock(return_value=[session])
@@ -243,7 +243,7 @@ async def test_ai_failure_falls_back_to_search():
 async def test_ai_disabled_play_command_plays():
     """With AI off, "play X" must dispatch PLAY, not fall back to SEARCH."""
     item = MediaItem(id="item-001", name="Inception", type="Movie")
-    session = PlaybackSession(id="sess-001", user_id="user-001", item=item)
+    session = PlaybackSession(id="sess-001", user_id="user-001", item=item, supports_remote_control=True)
 
     jellyfin = MagicMock()
     jellyfin.async_search = AsyncMock(return_value=[item])
@@ -277,7 +277,7 @@ async def test_ai_disabled_search_command_searches():
 @pytest.mark.asyncio
 async def test_ai_disabled_pause_command_pauses():
     item = MediaItem(id="item-001", name="Inception", type="Movie")
-    session = PlaybackSession(id="sess-001", user_id="user-001", item=item)
+    session = PlaybackSession(id="sess-001", user_id="user-001", item=item, supports_remote_control=True)
     jellyfin = MagicMock()
     jellyfin.async_get_sessions = AsyncMock(return_value=[session])
     jellyfin.async_pause = AsyncMock()
@@ -321,7 +321,7 @@ async def test_non_json_reply_searches_original_text():
 async def test_json_embedded_in_prose_is_extracted():
     jellyfin = MagicMock()
     item = MediaItem(id="i1", name="Inception", type="Movie")
-    session = PlaybackSession(id="s1", user_id="u1", item=item)
+    session = PlaybackSession(id="s1", user_id="u1", item=item, supports_remote_control=True)
     jellyfin.async_search = AsyncMock(return_value=[item])
     jellyfin.async_get_sessions = AsyncMock(return_value=[session])
     jellyfin.async_play = AsyncMock()
@@ -390,7 +390,7 @@ async def test_resume_with_null_user_id_falls_back_to_auth_user():
 @pytest.mark.asyncio
 async def test_play_season_as_string_is_coerced():
     item = MediaItem(id="series-1", name="Breaking Bad", type="Series")
-    session = PlaybackSession(id="s1", user_id="u1", item=item)
+    session = PlaybackSession(id="s1", user_id="u1", item=item, supports_remote_control=True)
     jellyfin = MagicMock()
     jellyfin.async_search = AsyncMock(return_value=[item])
     jellyfin.async_get_sessions = AsyncMock(return_value=[session])
@@ -412,7 +412,7 @@ async def test_play_season_as_string_is_coerced():
 async def test_quality_index_unchanged_when_restart_fails():
     """A failed stop/play must not desync the tracked quality step."""
     item = MediaItem(id="i1", name="Movie", type="Movie")
-    session = PlaybackSession(id="s1", user_id="u1", item=item, position_ticks=100)
+    session = PlaybackSession(id="s1", user_id="u1", item=item, position_ticks=100, supports_remote_control=True)
     jellyfin = MagicMock()
     jellyfin.async_get_sessions = AsyncMock(return_value=[session])
     jellyfin.async_stop = AsyncMock(side_effect=ConnectionError("boom"))
@@ -458,8 +458,8 @@ async def test_pause_targets_only_my_user_session():
     """With user_filter set, broadcast only hits that user's sessions."""
     jellyfin = MagicMock()
     jellyfin.async_get_sessions = AsyncMock(return_value=[
-        PlaybackSession(id="s-mine", user_id="u1", item=MediaItem(id="i1", name="X", type="Movie"), device_name="Living Room"),
-        PlaybackSession(id="s-brother", user_id="u2", item=MediaItem(id="i2", name="Y", type="Movie"), device_name="Bedroom"),
+        PlaybackSession(id="s-mine", user_id="u1", item=MediaItem(id="i1", name="X", type="Movie"), device_name="Living Room", supports_remote_control=True),
+        PlaybackSession(id="s-brother", user_id="u2", item=MediaItem(id="i2", name="Y", type="Movie"), device_name="Bedroom", supports_remote_control=True),
     ])
     jellyfin.async_pause = AsyncMock()
     router = IntentRouter(
@@ -479,7 +479,7 @@ async def test_pause_with_no_matching_device_falls_back_to_any_session():
     while their Fire TV has nothing open)."""
     jellyfin = MagicMock()
     jellyfin.async_get_sessions = AsyncMock(return_value=[
-        PlaybackSession(id="s-ipad", user_id="u1", item=MediaItem(id="i1", name="X", type="Movie"), device_name="iPad"),
+        PlaybackSession(id="s-ipad", user_id="u1", item=MediaItem(id="i1", name="X", type="Movie"), device_name="iPad", supports_remote_control=True),
     ])
     jellyfin.async_pause = AsyncMock()
     router = _router_with_device_filter("Fire TV", jellyfin=jellyfin)
@@ -495,7 +495,7 @@ async def test_pause_cross_user_blocked_by_user_filter():
     another user's session."""
     jellyfin = MagicMock()
     jellyfin.async_get_sessions = AsyncMock(return_value=[
-        PlaybackSession(id="s-brother", user_id="u2", item=MediaItem(id="i2", name="Y", type="Movie"), device_name="Bedroom"),
+        PlaybackSession(id="s-brother", user_id="u2", item=MediaItem(id="i2", name="Y", type="Movie"), device_name="Bedroom", supports_remote_control=True),
     ])
     jellyfin.async_pause = AsyncMock()
     router = IntentRouter(
@@ -525,7 +525,7 @@ async def test_play_with_no_matching_device_names_the_target_in_reply():
 async def test_now_playing_omits_device_note_when_already_targeted():
     jellyfin = MagicMock()
     jellyfin.async_get_sessions = AsyncMock(return_value=[
-        PlaybackSession(id="s1", user_id="u1", item=MediaItem(id="i1", name="Show", type="Movie"), device_name="Living Room"),
+        PlaybackSession(id="s1", user_id="u1", item=MediaItem(id="i1", name="Show", type="Movie"), device_name="Living Room", supports_remote_control=True),
     ])
     router = _router_with_device_filter("Living Room", jellyfin=jellyfin)
     provider = _provider_returning({"intent": "NOW_PLAYING", "params": {}})
@@ -539,7 +539,7 @@ async def test_now_playing_omits_device_note_when_already_targeted():
 async def test_now_playing_names_device_when_untargeted():
     jellyfin = MagicMock()
     jellyfin.async_get_sessions = AsyncMock(return_value=[
-        PlaybackSession(id="s1", user_id="u1", item=MediaItem(id="i1", name="Show", type="Movie"), device_name="Living Room"),
+        PlaybackSession(id="s1", user_id="u1", item=MediaItem(id="i1", name="Show", type="Movie"), device_name="Living Room", supports_remote_control=True),
     ])
     router = _make_router(jellyfin=jellyfin)  # no device_filter
     provider = _provider_returning({"intent": "NOW_PLAYING", "params": {}})

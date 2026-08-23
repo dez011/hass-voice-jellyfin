@@ -392,12 +392,14 @@ def _shared_two_device_server():
         id="sess-living-room", user_id="user-1",
         item=MediaItem(id="item-a", name="The Dark Knight", type="Movie"),
         device_name="Living Room Fire TV", client="Jellyfin Android TV",
-    )
+            supports_remote_control=True
+        )
     sess_bedroom = PlaybackSession(
         id="sess-bedroom", user_id="user-2",
         item=MediaItem(id="item-b", name="Bluey", type="Series"),
         device_name="Bedroom Fire TV", client="Astra",
-    )
+            supports_remote_control=True
+        )
     jf = MagicMock()
     jf.async_get_sessions = AsyncMock(return_value=[sess_living_room, sess_bedroom])
     jf.async_play = AsyncMock()

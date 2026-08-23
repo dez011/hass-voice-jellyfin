@@ -14,10 +14,18 @@ from custom_components.voice_jellyfin.jellyfin.auth import JellyfinAuth
 from custom_components.voice_jellyfin.jellyfin.client import JellyfinClient
 
 
-def _make_router(jellyfin=None, tv=None, nav=None, hass=None, **kw):
+_UNSET = object()
+
+
+def _make_router(jellyfin=None, tv=_UNSET, nav=None, hass=None, **kw):
+    """Build a router with mocked deps.
+
+    ``tv`` uses a sentinel so an explicit ``tv=None`` means "no TV controller"
+    (needed to exercise the no-ADB-fallback path) rather than "use a default".
+    """
     return IntentRouter(
         jellyfin=jellyfin or MagicMock(),
-        tv=tv or MagicMock(),
+        tv=MagicMock() if tv is _UNSET else tv,
         nav=nav or MagicMock(),
         hass=hass or MagicMock(),
         **kw,
@@ -496,16 +504,16 @@ def _uncontrollable_session(client="Plezy", device="iPad"):
 
 @pytest.mark.asyncio
 async def test_pause_on_uncontrollable_client_reports_the_truth():
+    """With no TV to fall back to, the command is still attempted (the client
+    may under-report), but the reply must not claim success."""
     jellyfin = MagicMock()
     jellyfin.async_get_sessions = AsyncMock(return_value=[_uncontrollable_session()])
     jellyfin.async_pause = AsyncMock()
 
-    router = _make_router(jellyfin=jellyfin)
+    router = _make_router(jellyfin=jellyfin, tv=None)
     result = await router.async_route("pause", provider=None, context=AIContext(), ai_enabled=False)
 
-    # The command is still attempted — the server may yet deliver it.
     jellyfin.async_pause.assert_awaited()
-    # ...but the reply must not claim success.
     reply = result.speech_reply.lower()
     assert "done" != reply
     assert "plezy" in reply
@@ -542,3 +550,105 @@ async def test_warning_names_every_uncontrollable_client():
 
     assert "Plezy" in result.speech_reply
     assert "Jellyfin iPadOS" in result.speech_reply
+
+
+# ---------------------------------------------------------------------------
+# Control method: Jellyfin session API vs TV/ADB. ADB drives a Fire TV at the
+# OS level, so it works on clients Jellyfin can't reach.
+# ---------------------------------------------------------------------------
+
+from custom_components.voice_jellyfin.const import (
+    CONTROL_METHOD_AUTO,
+    CONTROL_METHOD_JELLYFIN,
+    CONTROL_METHOD_TV,
+    KEY_PAUSE,
+)
+
+
+def _tv_mock():
+    tv = MagicMock()
+    tv.async_send_key = AsyncMock()
+    return tv
+
+
+def _jf_with(session):
+    jf = MagicMock()
+    jf.async_get_sessions = AsyncMock(return_value=[session])
+    jf.async_pause = AsyncMock()
+    jf.async_send_general_command = AsyncMock()
+    return jf
+
+
+@pytest.mark.asyncio
+async def test_auto_falls_back_to_adb_when_client_cannot_be_controlled():
+    """The Fire TV case: Jellyfin can't reach the client, so use ADB rather
+    than sending into the void and reporting success."""
+    jf, tv = _jf_with(_uncontrollable_session()), _tv_mock()
+
+    router = _make_router(jellyfin=jf, tv=tv, control_method=CONTROL_METHOD_AUTO)
+    await router.async_route("pause", provider=None, context=AIContext(), ai_enabled=False)
+
+    tv.async_send_key.assert_awaited_once_with(KEY_PAUSE)
+    jf.async_pause.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_auto_prefers_jellyfin_when_client_is_controllable():
+    session = _uncontrollable_session(client="Jellyfin Android TV")
+    session.supports_remote_control = True
+    jf, tv = _jf_with(session), _tv_mock()
+
+    router = _make_router(jellyfin=jf, tv=tv, control_method=CONTROL_METHOD_AUTO)
+    await router.async_route("pause", provider=None, context=AIContext(), ai_enabled=False)
+
+    jf.async_pause.assert_awaited_once_with("sess-nc")
+    tv.async_send_key.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tv_mode_never_touches_jellyfin():
+    session = _uncontrollable_session(client="Jellyfin Android TV")
+    session.supports_remote_control = True  # controllable, but TV mode forced
+    jf, tv = _jf_with(session), _tv_mock()
+
+    router = _make_router(jellyfin=jf, tv=tv, control_method=CONTROL_METHOD_TV)
+    await router.async_route("pause", provider=None, context=AIContext(), ai_enabled=False)
+
+    tv.async_send_key.assert_awaited_once_with(KEY_PAUSE)
+    jf.async_pause.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_jellyfin_mode_never_falls_back_to_adb():
+    """Forcing Jellyfin must not silently use ADB — that would make the two
+    modes indistinguishable when comparing them on a live device."""
+    jf, tv = _jf_with(_uncontrollable_session()), _tv_mock()
+
+    router = _make_router(jellyfin=jf, tv=tv, control_method=CONTROL_METHOD_JELLYFIN)
+    await router.async_route("pause", provider=None, context=AIContext(), ai_enabled=False)
+
+    jf.async_pause.assert_awaited_once_with("sess-nc")
+    tv.async_send_key.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tv_mode_sends_nav_keys_over_adb():
+    jf, tv = _jf_with(_uncontrollable_session()), _tv_mock()
+
+    router = _make_router(jellyfin=jf, tv=tv, control_method=CONTROL_METHOD_TV)
+    await router.async_route("go up", provider=None, context=AIContext(), ai_enabled=False)
+
+    tv.async_send_key.assert_awaited_once_with("up")
+    jf.async_send_general_command.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_adb_delivery_suppresses_the_remote_control_warning():
+    """A command that actually landed over ADB must not be reported as
+    ignored — the warning is about Jellyfin delivery only."""
+    jf, tv = _jf_with(_uncontrollable_session()), _tv_mock()
+
+    router = _make_router(jellyfin=jf, tv=tv, control_method=CONTROL_METHOD_AUTO)
+    result = await router.async_route("pause", provider=None, context=AIContext(), ai_enabled=False)
+
+    assert "remote control" not in (result.speech_reply or "").lower()

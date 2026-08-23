@@ -17,6 +17,28 @@ CONF_JELLYFIN_VERIFY_SSL = "jellyfin_verify_ssl"
 # shares the same Jellyfin server. Blank = control whichever session is active.
 CONF_JELLYFIN_TARGET_DEVICE = "jellyfin_target_device"
 
+# How playback/navigation commands are delivered. Jellyfin's session API only
+# works if the client opened a websocket to listen (Swiftfin/Plezy/iOS do not),
+# while ADB drives a Fire TV / Android TV at the OS level regardless of which
+# app is in front — so ADB is strictly more capable on those devices.
+CONF_CONTROL_METHOD = "control_method"
+CONTROL_METHOD_AUTO = "auto"
+CONTROL_METHOD_JELLYFIN = "jellyfin"
+CONTROL_METHOD_TV = "tv"
+DEFAULT_CONTROL_METHOD = CONTROL_METHOD_AUTO
+
+CONTROL_METHODS = [
+    CONTROL_METHOD_AUTO,
+    CONTROL_METHOD_JELLYFIN,
+    CONTROL_METHOD_TV,
+]
+
+CONTROL_METHOD_LABELS = {
+    CONTROL_METHOD_AUTO: "Auto (Jellyfin if supported, else TV/ADB)",
+    CONTROL_METHOD_JELLYFIN: "Jellyfin API only",
+    CONTROL_METHOD_TV: "TV / ADB only (Fire TV)",
+}
+
 CONF_TV_TYPE = "tv_type"
 CONF_ANDROID_TV_ENTITY = "android_tv_entity"
 CONF_APPLE_TV_ENTITY = "apple_tv_entity"

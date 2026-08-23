@@ -403,5 +403,14 @@
       "connection_ok": "✓ Connected — server is reachable and the API key is valid.",
       "unknown": "Unexpected error. Check the HA logs for details."
     }
+  },
+  "selector": {
+    "control_method": {
+      "options": {
+        "auto": "Auto (Jellyfin if supported, else TV/ADB)",
+        "jellyfin": "Jellyfin API only",
+        "tv": "TV / ADB only (Fire TV)"
+      }
+    }
   }
 }

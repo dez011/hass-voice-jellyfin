@@ -10,6 +10,7 @@ from typing import Any, Optional
 from .base import AIProvider
 from .context import AIContext
 from ..jellyfin.session_select import pick_now_playing, pick_session
+from ..const import KEY_PAUSE, KEY_PLAY, KEY_STOP
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -111,6 +112,7 @@ class IntentRouter:
         current_bitrate_idx: int = -1,
         device_filter: Optional[str] = None,
         user_filter: Optional[str] = None,
+        control_method: Optional[str] = None,
     ) -> None:
         self._jellyfin = jellyfin
         self._tv = tv
@@ -129,6 +131,12 @@ class IntentRouter:
         # Sessions targeted by the most recent broadcast, used to explain a
         # command that Jellyfin accepted but no client acted on.
         self._last_targets: list[Any] = []
+        from ..const import DEFAULT_CONTROL_METHOD
+        self._control_method = control_method or DEFAULT_CONTROL_METHOD
+        # Set when a command was delivered over ADB/TV rather than Jellyfin, so
+        # the "client can't be remote controlled" warning is suppressed — the
+        # command did land, just by another route.
+        self._delivered_via_tv = False
         from ..const import BITRATE_PRESETS_KBPS
         self._bitrate_presets = bitrate_presets or BITRATE_PRESETS_KBPS
         self._bitrate_idx = current_bitrate_idx  # -1 = auto (no cap)
@@ -174,6 +182,7 @@ class IntentRouter:
         # Clear last command's targets so _control_warning() can't report on
         # a stale broadcast from an earlier call.
         self._last_targets = []
+        self._delivered_via_tv = False
 
         # A previous PLAY was ambiguous — check if this command picks one
         # of the offered titles ("the first one", "batman begins", "two").
@@ -369,6 +378,10 @@ class IntentRouter:
     def _control_warning(self) -> Optional[str]:
         """Explain why a broadcast command had no effect, or None if it
         reached at least one client capable of acting on it."""
+        if self._delivered_via_tv:
+            # Went out over ADB/TV, which doesn't depend on the Jellyfin
+            # client listening — nothing to warn about.
+            return None
         targets = self._last_targets
         if not targets:
             # Nothing was targeted — the handler's own reply ("nothing
@@ -542,6 +555,17 @@ class IntentRouter:
     async def _handle_resume(
         self, result: IntentResult, params: dict[str, Any]
     ) -> IntentResult:
+        from ..const import CONTROL_METHOD_TV
+
+        # TV-only mode: the play/pause key toggles playback on the device
+        # itself, so there's no session bookkeeping to do.
+        if self._control_method == CONTROL_METHOD_TV:
+            if self._tv:
+                await self._tv.async_send_key(KEY_PLAY)
+                self._delivered_via_tv = True
+                result.speech_reply = result.speech_reply or "Resuming."
+            return result
+
         if not self._jellyfin:
             return result
         # Unpause ALL paused sessions — broadcast so any active client gets it
@@ -569,16 +593,35 @@ class IntentRouter:
         return result
 
     async def _handle_pause(self, params: dict[str, Any]) -> None:
-        if not self._jellyfin:
-            return
-        for sid in (await self._all_session_ids(require_item=True)):
-            await self._jellyfin.async_pause(sid)
+        await self._playback_action("async_pause", KEY_PAUSE)
 
     async def _handle_stop(self, params: dict[str, Any]) -> None:
-        if not self._jellyfin:
+        await self._playback_action("async_stop", KEY_STOP)
+
+    async def _playback_action(self, jf_method: str, tv_key: str) -> None:
+        """Run a playback action over the configured transport.
+
+        Mirrors _send_key: Jellyfin when a session can actually receive it,
+        otherwise the TV's media keys, which work on a Fire TV no matter what
+        the Jellyfin client supports.
+        """
+        from ..const import CONTROL_METHOD_JELLYFIN, CONTROL_METHOD_TV
+
+        method = self._control_method
+
+        if method != CONTROL_METHOD_TV and self._jellyfin:
+            session_ids = await self._jellyfin_target_ids(require_item=True)
+            if session_ids:
+                for sid in session_ids:
+                    await getattr(self._jellyfin, jf_method)(sid)
+                return
+
+        if method == CONTROL_METHOD_JELLYFIN:
             return
-        for sid in (await self._all_session_ids(require_item=True)):
-            await self._jellyfin.async_stop(sid)
+
+        if self._tv:
+            await self._tv.async_send_key(tv_key)
+            self._delivered_via_tv = True
 
     async def _handle_play_latest(self, result: IntentResult) -> IntentResult:
         if not self._jellyfin:
@@ -792,14 +835,22 @@ class IntentRouter:
     }
 
     async def _send_key(self, key: str) -> None:
-        """Broadcast a navigation/key command to all real sessions.
+        """Deliver a navigation/key command over the configured transport.
 
-        Tries Jellyfin's general-command API first (no ADB needed), falls back
-        to the TV controller for keys Jellyfin doesn't cover.
+        Jellyfin's session API only reaches clients that opened a websocket to
+        listen for commands; ADB drives the device at the OS level and works
+        regardless of which app is in front. In ``auto`` we use Jellyfin only
+        when a session actually reports it can be controlled, and otherwise
+        fall through to the TV — sending to a deaf session and returning would
+        strand Fire TV users who have a perfectly good ADB path available.
         """
+        from ..const import CONTROL_METHOD_JELLYFIN, CONTROL_METHOD_TV
+
+        method = self._control_method
         jf_cmd = self._JELLYFIN_NAV_COMMANDS.get(key)
-        if jf_cmd and self._jellyfin:
-            session_ids = await self._all_session_ids(require_item=False)
+
+        if method != CONTROL_METHOD_TV and jf_cmd and self._jellyfin:
+            session_ids = await self._jellyfin_target_ids(require_item=False)
             if session_ids:
                 for sid in session_ids:
                     try:
@@ -808,10 +859,45 @@ class IntentRouter:
                         _LOGGER.warning("voice_jellyfin: nav command %s → %s failed: %s", jf_cmd, sid[:8], exc)
                 return
 
+        if method == CONTROL_METHOD_JELLYFIN:
+            _LOGGER.warning(
+                "voice_jellyfin: key %r not sent — control method is "
+                "'jellyfin' but no controllable session was found", key,
+            )
+            return
+
         if self._tv:
             await self._tv.async_send_key(key)
+            self._delivered_via_tv = True
         else:
             _LOGGER.warning("voice_jellyfin: key %r undelivered — no sessions and no TV controller", key)
+
+    async def _jellyfin_target_ids(self, require_item: bool = True) -> list[str]:
+        """Session ids to send a Jellyfin command to, honouring control method.
+
+        In ``auto`` this narrows to sessions that report SupportsMediaControl,
+        so an uncontrollable client doesn't swallow the command and block the
+        ADB fallback. In ``jellyfin`` mode we still return every match — the
+        user explicitly asked for this transport, so try it and let the
+        warning explain if nothing listened.
+        """
+        from ..const import CONTROL_METHOD_JELLYFIN
+
+        ids = await self._all_session_ids(require_item=require_item)
+        if self._control_method == CONTROL_METHOD_JELLYFIN:
+            return ids
+        controllable = [
+            s.id for s in self._last_targets
+            if getattr(s, "supports_remote_control", False)
+        ]
+        if controllable:
+            return controllable
+        if self._tv is None:
+            # Nothing reports being controllable, but there's no TV to fall
+            # back to either. Try Jellyfin anyway: a client that under-reports
+            # its capabilities still beats dropping the command outright.
+            return ids
+        return []
 
     _PLAY_PREFIXES = ("play ", "put on ", "watch ", "start ")
     _SEARCH_PREFIXES = ("search for ", "search ", "find ", "look up ", "show me ")

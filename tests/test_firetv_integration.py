@@ -411,7 +411,8 @@ class TestIntentRouterFireTV:
                     item=MediaItem(id="item-001", name="Breaking Bad", type="Episode"),
                     position_ticks=0,
                     is_paused=False,
-                )
+            supports_remote_control=True
+        )
             ])
             jellyfin_client.async_play = AsyncMock()
             jellyfin_client.async_pause = AsyncMock()
@@ -607,11 +608,12 @@ class TestIntentRouterFireTV:
         """PAUSE picks the session with an active item, not the first idle session."""
         from custom_components.voice_jellyfin.jellyfin.models import PlaybackSession, MediaItem
 
-        idle_session = PlaybackSession(id="idle-001", user_id="uid", item=None, position_ticks=0, is_paused=False)
+        idle_session = PlaybackSession(id="idle-001", user_id="uid", item=None, position_ticks=0, is_paused=False, supports_remote_control=True)
         active_session = PlaybackSession(
             id="active-001", user_id="uid",
             item=MediaItem(id="item-001", name="Interstellar", type="Movie"),
             position_ticks=5_000_000, is_paused=False,
+            supports_remote_control=True
         )
 
         jellyfin = MagicMock()

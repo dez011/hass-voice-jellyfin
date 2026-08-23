@@ -23,6 +23,9 @@ from .const import (
     CONF_JELLYFIN_USERNAME,
     CONF_JELLYFIN_DEFAULT_USER,
     CONF_JELLYFIN_TARGET_DEVICE,
+    CONF_CONTROL_METHOD,
+    CONTROL_METHODS,
+    DEFAULT_CONTROL_METHOD,
     CONF_JELLYFIN_VERIFY_SSL,
     CONF_TV_TYPE,
     CONF_ANDROID_TV_ENTITY,
@@ -1057,6 +1060,12 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                     vol.Optional(CONF_TV_WAKE_SUPPORT): bool,
                     vol.Optional(CONF_PREFERRED_CLIENT_PACKAGE): str,
                     vol.Optional(CONF_JELLYFIN_TARGET_DEVICE): str,
+                    vol.Optional(CONF_CONTROL_METHOD): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=CONTROL_METHODS,
+                            translation_key="control_method",
+                        )
+                    ),
                 }),
                 {
                     CONF_ANDROID_TV_ENTITY: current.get(CONF_ANDROID_TV_ENTITY, ""),
@@ -1065,6 +1074,7 @@ class VoiceJellyfinOptionsFlow(config_entries.OptionsFlow):
                     CONF_TV_WAKE_SUPPORT: current.get(CONF_TV_WAKE_SUPPORT, True),
                     CONF_PREFERRED_CLIENT_PACKAGE: current.get(CONF_PREFERRED_CLIENT_PACKAGE, DEFAULT_PREFERRED_CLIENT_PACKAGE),
                     CONF_JELLYFIN_TARGET_DEVICE: current.get(CONF_JELLYFIN_TARGET_DEVICE, ""),
+                    CONF_CONTROL_METHOD: current.get(CONF_CONTROL_METHOD, DEFAULT_CONTROL_METHOD),
                 },
             ),
         )
