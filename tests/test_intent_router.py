@@ -469,15 +469,35 @@ async def test_pause_targets_only_matching_device():
 
 
 @pytest.mark.asyncio
-async def test_pause_with_no_matching_device_does_nothing():
-    """No cross-talk: if the targeted TV has no session, pause must not
-    silently act on someone else's."""
+async def test_pause_with_no_matching_device_falls_back_to_any_session():
+    """If the configured device has no sessions at all, fall back to any
+    available real session so the button still works (e.g. user is on iPad
+    while their Fire TV has nothing open)."""
+    jellyfin = MagicMock()
+    jellyfin.async_get_sessions = AsyncMock(return_value=[
+        PlaybackSession(id="s-ipad", user_id="u1", item=MediaItem(id="i1", name="X", type="Movie"), device_name="iPad"),
+    ])
+    jellyfin.async_pause = AsyncMock()
+    router = _router_with_device_filter("Fire TV", jellyfin=jellyfin)
+    provider = _provider_returning({"intent": "PAUSE", "params": {}})
+
+    await router.async_route("pause", provider, AIContext())
+    jellyfin.async_pause.assert_called_once_with("s-ipad")
+
+
+@pytest.mark.asyncio
+async def test_pause_cross_user_blocked_by_user_filter():
+    """user_filter provides isolation: a device fallback must not grab
+    another user's session."""
     jellyfin = MagicMock()
     jellyfin.async_get_sessions = AsyncMock(return_value=[
         PlaybackSession(id="s-brother", user_id="u2", item=MediaItem(id="i2", name="Y", type="Movie"), device_name="Bedroom"),
     ])
     jellyfin.async_pause = AsyncMock()
-    router = _router_with_device_filter("Living Room", jellyfin=jellyfin)
+    router = IntentRouter(
+        jellyfin=jellyfin, tv=MagicMock(), nav=MagicMock(), hass=MagicMock(),
+        device_filter="Living Room", user_filter="u1",  # u1 ≠ u2 (brother)
+    )
     provider = _provider_returning({"intent": "PAUSE", "params": {}})
 
     await router.async_route("pause", provider, AIContext())

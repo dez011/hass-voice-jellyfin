@@ -47,11 +47,25 @@ def test_device_filter_is_case_insensitive():
     assert pick_session(sessions, device_filter="LIVING room").id == "a"
 
 
-def test_device_filter_no_match_returns_none_not_a_fallback():
-    """The whole point: a targeted TV with no matching session must not
-    silently grab someone else's session."""
-    sessions = [_session("brothers-tv", device_name="Brother's Fire TV")]
+def test_device_filter_no_match_but_device_exists_returns_none():
+    """Configured device IS present in sessions but has nothing playing/paused
+    on it — don't grab a different device's session."""
+    sessions = [
+        _session("brothers-tv", device_name="Brother's Fire TV"),
+        _session("my-tv", device_name="My Living Room Fire TV", item=False),
+    ]
+    # My TV exists but has no item; brothers-tv has item but wrong device
     assert pick_session(sessions, device_filter="my living room") is None
+
+
+def test_device_filter_no_match_device_absent_falls_back():
+    """Configured device has ZERO sessions (e.g. TV is off, user is on iPad).
+    Fall back to any available real session so commands still work."""
+    sessions = [_session("ipad", device_name="iPad", client="Plezy")]
+    # "fire tv" has no sessions at all → fall back to iPad
+    result = pick_session(sessions, device_filter="fire tv")
+    assert result is not None
+    assert result.id == "ipad"
 
 
 def test_device_filter_blank_string_behaves_as_unfiltered():
@@ -110,12 +124,23 @@ def test_now_playing_falls_back_to_paused_when_nothing_active():
 
 
 def test_now_playing_respects_device_filter_in_both_tiers():
+    """When the configured device exists and has a paused session, prefer it
+    over an actively-playing session on a different device."""
     sessions = [
         _session("other-playing", device_name="Other TV", paused=False),
         _session("mine-paused", device_name="My TV", paused=True),
     ]
     result = pick_now_playing(sessions, device_filter="My TV")
     assert result.id == "mine-paused"
+
+
+def test_now_playing_falls_back_when_configured_device_absent():
+    """If the configured device has no sessions at all, fall back to whatever
+    is playing — user switched to a different device (phone, iPad, etc.)."""
+    sessions = [_session("ipad", device_name="iPad", client="Plezy", paused=True)]
+    result = pick_now_playing(sessions, device_filter="Fire TV")
+    assert result is not None
+    assert result.id == "ipad"
 
 
 def test_now_playing_no_sessions_returns_none():

@@ -278,7 +278,9 @@ async def test_async_update_data_now_playing_respects_target_device(mock_hass, m
     coordinator.jellyfin_client = client
 
     data = await coordinator._async_update_data()
-    assert data["now_playing"] is None
+    # "Living Room" has no sessions at all, so pick_now_playing falls back
+    # to the only real session (Bedroom) rather than silently returning None.
+    assert data["now_playing"]["title"] == "Other"
 
 
 @pytest.mark.asyncio

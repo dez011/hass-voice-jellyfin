@@ -44,16 +44,39 @@ def pick_session(
     elif paused is False:
         candidates = [s for s in candidates if not s.is_paused]
 
+    # Strip internal/system sessions (UserId all-zeros) so they never get
+    # picked — the HA integration itself creates Hass client sessions.
+    real = [s for s in candidates if s.user_id and s.user_id.replace("0", "")]
+    if real:
+        candidates = real
+
     if user_id:
         candidates = [s for s in candidates if s.user_id == user_id]
 
     needle = (device_filter or "").strip().lower()
     if needle:
-        candidates = [
+        matched = [
             s for s in candidates
             if needle in (s.device_name or "").lower()
             or needle in (s.client or "").lower()
         ]
+        if matched:
+            candidates = matched
+        else:
+            # The configured device has no eligible sessions — check whether
+            # it has ANY sessions at all (across the full unfiltered list).
+            # If yes: the device exists but nothing is playing/paused on it,
+            # so return None (don't grab a completely different device).
+            # If no: the user is on a different device entirely (e.g. their
+            # TV is off and they're watching on their iPad), so fall through
+            # to whatever session is available.
+            device_any = [
+                s for s in sessions
+                if needle in (s.device_name or "").lower()
+                or needle in (s.client or "").lower()
+            ]
+            if device_any:
+                candidates = []   # device present but nothing to target
 
     return candidates[0] if candidates else None
 
