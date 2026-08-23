@@ -503,17 +503,21 @@ class IntentRouter:
     ) -> IntentResult:
         if not self._jellyfin:
             return result
-        # Check for a currently paused session first — unpause it
+        # Unpause ALL paused sessions — broadcast so any active client gets it
         sessions = await self._jellyfin.async_get_sessions()
-        paused = self._pick(sessions, require_item=True, paused=True)
-        if paused:
-            await self._jellyfin.async_unpause(paused.id)
-            name = paused.item.name if paused.item else "playback"
+        real = [s for s in sessions if s.user_id and s.user_id.replace("0", "")]
+        if self._user_filter:
+            filtered = [s for s in real if s.user_id == self._user_filter]
+            real = filtered if filtered else real
+        paused_sessions = [s for s in real if s.item and s.is_paused]
+        if paused_sessions:
+            for s in paused_sessions:
+                await self._jellyfin.async_unpause(s.id)
+            name = paused_sessions[0].item.name if paused_sessions[0].item else "playback"
             result.media_title = name
             result.speech_reply = result.speech_reply or f"Resuming {name}."
             return result
-        # No paused session — resume first in-progress item.
-        # `or` (not a .get default) so a JSON null user_id still falls back.
+        # Nothing paused — resume first in-progress item for the user
         user_id = params.get("user_id") or self._jellyfin._auth.user_id or ""
         title = await self._jellyfin.async_resume(user_id, device_filter=self._device_filter)
         if title:
@@ -524,20 +528,16 @@ class IntentRouter:
         return result
 
     async def _handle_pause(self, params: dict[str, Any]) -> None:
-        if self._jellyfin:
-            session_id = params.get("session_id") or await self._active_session_id()
-            if session_id:
-                await self._jellyfin.async_pause(session_id)
-            else:
-                _LOGGER.warning("voice_jellyfin: PAUSE ignored — no active playing session found")
+        if not self._jellyfin:
+            return
+        for sid in (await self._all_session_ids(require_item=True)):
+            await self._jellyfin.async_pause(sid)
 
     async def _handle_stop(self, params: dict[str, Any]) -> None:
-        if self._jellyfin:
-            session_id = params.get("session_id") or await self._active_session_id()
-            if session_id:
-                await self._jellyfin.async_stop(session_id)
-            else:
-                _LOGGER.warning("voice_jellyfin: STOP ignored — no active playing session found")
+        if not self._jellyfin:
+            return
+        for sid in (await self._all_session_ids(require_item=True)):
+            await self._jellyfin.async_stop(sid)
 
     async def _handle_play_latest(self, result: IntentResult) -> IntentResult:
         if not self._jellyfin:
@@ -571,11 +571,12 @@ class IntentRouter:
     async def _handle_next_episode(self, result: IntentResult) -> IntentResult:
         if not self._jellyfin:
             return result
-        session_id = await self._active_session_id()
-        if not session_id:
+        ids = await self._all_session_ids(require_item=True)
+        if not ids:
             result.speech_reply = "Nothing is playing."
             return result
-        await self._jellyfin.async_next_track(session_id)
+        for sid in ids:
+            await self._jellyfin.async_next_track(sid)
         result.speech_reply = result.speech_reply or "Skipping to the next episode."
         return result
 
@@ -683,31 +684,41 @@ class IntentRouter:
             await wake_fn()
         return True
 
-    async def _active_session_id(self, require_item: bool = True) -> Optional[str]:
+    async def _all_session_ids(self, require_item: bool = True) -> list[str]:
+        """Return IDs of ALL real user sessions that match current filters.
+
+        Broadcasting to every matching session sidesteps the "which device"
+        problem entirely — if the user has one session it hits that one; if
+        they have several (phone + TV) it hits all of them, which is usually
+        what they want (pause everything, navigate on all screens, etc.).
+        """
         if not self._jellyfin:
-            _LOGGER.warning("voice_jellyfin: _active_session_id called but no Jellyfin client")
-            return None
+            _LOGGER.warning("voice_jellyfin: no Jellyfin client")
+            return []
         sessions = await self._jellyfin.async_get_sessions()
-        _LOGGER.warning(
-            "voice_jellyfin: _active_session_id — %d session(s) found, "
-            "user_filter=%r, device_filter=%r, require_item=%s | sessions: %s",
-            len(sessions),
-            self._user_filter,
-            self._device_filter,
-            require_item,
-            [
-                f"id={s.id[:8]} user={s.user_id[:8] if s.user_id else 'none'} "
-                f"name={s.user_name!r} device={s.device_name!r} "
-                f"item={'yes' if s.item else 'no'}"
-                for s in sessions
-            ],
+
+        # Strip internal HA/system sessions (UserId all-zeros)
+        real = [s for s in sessions if s.user_id and s.user_id.replace("0", "")]
+
+        if self._user_filter:
+            real = [s for s in real if s.user_id == self._user_filter]
+
+        if require_item:
+            real = [s for s in real if s.item]
+
+        _LOGGER.debug(
+            "voice_jellyfin: broadcasting to %d session(s) %s",
+            len(real),
+            [f"{s.device_name}/{s.client}" for s in real],
         )
-        active = self._pick(sessions, require_item=require_item)
-        if not active:
-            _LOGGER.warning(
-                "voice_jellyfin: no session matched filters — command will be ignored",
-            )
-        return active.id if active else None
+        if not real:
+            _LOGGER.warning("voice_jellyfin: no sessions to send command to")
+        return [s.id for s in real]
+
+    # Keep single-session helper for callers that still need one (e.g. PLAY targeting)
+    async def _active_session_id(self, require_item: bool = True) -> Optional[str]:
+        ids = await self._all_session_ids(require_item=require_item)
+        return ids[0] if ids else None
 
     # Maps internal key names → Jellyfin general command names
     _JELLYFIN_NAV_COMMANDS: dict[str, str] = {
@@ -726,31 +737,26 @@ class IntentRouter:
     }
 
     async def _send_key(self, key: str) -> None:
-        """Send a navigation/key command.
+        """Broadcast a navigation/key command to all real sessions.
 
-        Tries Jellyfin's own general-command API first (works without ADB or
-        Apple TV).  Falls back to the TV controller for keys Jellyfin doesn't
-        handle (fast_forward, rewind, etc.).
+        Tries Jellyfin's general-command API first (no ADB needed), falls back
+        to the TV controller for keys Jellyfin doesn't cover.
         """
         jf_cmd = self._JELLYFIN_NAV_COMMANDS.get(key)
         if jf_cmd and self._jellyfin:
-            session_id = await self._active_session_id(require_item=False)
-            if session_id:
-                try:
-                    await self._jellyfin.async_send_general_command(session_id, jf_cmd)
-                    return
-                except Exception as exc:
-                    _LOGGER.warning("voice_jellyfin: Jellyfin nav command %s failed: %s", jf_cmd, exc)
-            else:
-                _LOGGER.warning("voice_jellyfin: no session to send key %r to via Jellyfin API", key)
+            session_ids = await self._all_session_ids(require_item=False)
+            if session_ids:
+                for sid in session_ids:
+                    try:
+                        await self._jellyfin.async_send_general_command(sid, jf_cmd)
+                    except Exception as exc:
+                        _LOGGER.warning("voice_jellyfin: nav command %s → %s failed: %s", jf_cmd, sid[:8], exc)
+                return
 
         if self._tv:
             await self._tv.async_send_key(key)
         else:
-            _LOGGER.warning(
-                "voice_jellyfin: key %r undelivered — no Jellyfin session and no TV controller",
-                key,
-            )
+            _LOGGER.warning("voice_jellyfin: key %r undelivered — no sessions and no TV controller", key)
 
     _PLAY_PREFIXES = ("play ", "put on ", "watch ", "start ")
     _SEARCH_PREFIXES = ("search for ", "search ", "find ", "look up ", "show me ")

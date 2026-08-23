@@ -109,6 +109,7 @@ class FireTVHarness:
             jf.async_pause = AsyncMock()
             jf.async_stop = AsyncMock()
             jf.async_search = AsyncMock(return_value=[])
+            jf.async_send_general_command = AsyncMock()
             jf._auth = MagicMock()
             jf._auth.user_id = "user-1"
         self.jellyfin = jf
@@ -218,10 +219,13 @@ async def test_volume_and_mute_in_nav_mode():
 
 @pytest.mark.asyncio
 async def test_volume_without_nav_mode():
-    """'volume up' works outside Navigation Mode via rule-based intents."""
+    """'volume up' outside Navigation Mode goes via Jellyfin general command API
+    (VolumeUp) rather than ADB — no ADB keyevent needed when a session is active."""
     tv = FireTVHarness()
     await tv.say("volume up")
-    assert tv.keyevents() == [24]
+    tv.jellyfin.async_send_general_command.assert_awaited_once()
+    args = tv.jellyfin.async_send_general_command.await_args
+    assert args[0][1] == "VolumeUp"
 
 
 @pytest.mark.asyncio
@@ -367,7 +371,9 @@ async def test_working_ai_is_used_when_enabled():
     tv = FireTVHarness(ai_enabled=True, ai_provider=provider)
     reply = await tv.say("move down a bit please")
     provider.async_query.assert_awaited_once()
-    assert tv.keyevents() == [20]
+    # Nav goes via Jellyfin general command API (MoveDown) when a session exists
+    tv.jellyfin.async_send_general_command.assert_awaited_once()
+    assert tv.jellyfin.async_send_general_command.await_args[0][1] == "MoveDown"
     assert reply == "Going down."
 
 
@@ -394,6 +400,7 @@ def _shared_two_device_server():
     jf.async_pause = AsyncMock()
     jf.async_stop = AsyncMock()
     jf.async_search = AsyncMock(return_value=[])
+    jf.async_send_general_command = AsyncMock()
     jf._auth = MagicMock()
     jf._auth.user_id = "user-1"
     return jf, sess_living_room, sess_bedroom
@@ -401,16 +408,17 @@ def _shared_two_device_server():
 
 @pytest.mark.asyncio
 async def test_two_tvs_pause_targets_only_their_own_session():
-    """The scenario this feature exists for: two people, two Fire TVs, one
-    Jellyfin server. Pausing from one entry must never touch the other's."""
+    """Two people, two Fire TVs, one Jellyfin server.  user_filter (default_user)
+    scopes each entry to its own user so broadcast pause only hits that user's
+    session — never the other person's."""
     shared_jf, sess_a, sess_b = _shared_two_device_server()
     tv_a = FireTVHarness(
         target_device="Living Room", entity_id="media_player.living_room",
-        entry_id="entry-a", shared_jellyfin=shared_jf,
+        entry_id="entry-a", shared_jellyfin=shared_jf, default_user="user-1",
     )
     tv_b = FireTVHarness(
         target_device="Bedroom", entity_id="media_player.bedroom",
-        entry_id="entry-b", shared_jellyfin=shared_jf,
+        entry_id="entry-b", shared_jellyfin=shared_jf, default_user="user-2",
     )
 
     await tv_a.say("pause")
@@ -426,11 +434,11 @@ async def test_two_tvs_stop_targets_only_their_own_session():
     shared_jf, sess_a, sess_b = _shared_two_device_server()
     tv_a = FireTVHarness(
         target_device="Living Room", entity_id="media_player.living_room",
-        entry_id="entry-a", shared_jellyfin=shared_jf,
+        entry_id="entry-a", shared_jellyfin=shared_jf, default_user="user-1",
     )
     tv_b = FireTVHarness(
         target_device="Bedroom", entity_id="media_player.bedroom",
-        entry_id="entry-b", shared_jellyfin=shared_jf,
+        entry_id="entry-b", shared_jellyfin=shared_jf, default_user="user-2",
     )
 
     await tv_b.say("stop")
@@ -457,12 +465,13 @@ async def test_two_tvs_play_targets_only_their_own_session():
 
 @pytest.mark.asyncio
 async def test_untargeted_tv_without_device_filter_still_works_alone():
-    """A single-TV household (no target_device configured) keeps the
-    original simple behavior — first session found."""
+    """Single-TV / single-user household — no device or user filter.
+    Broadcast hits all real sessions (both in this two-session fixture)."""
     shared_jf, sess_a, sess_b = _shared_two_device_server()
-    tv = FireTVHarness(shared_jellyfin=shared_jf)  # no target_device
+    tv = FireTVHarness(shared_jellyfin=shared_jf)  # no target_device, no default_user
     await tv.say("pause")
-    shared_jf.async_pause.assert_awaited_once_with("sess-living-room")
+    # Both sessions are real → both get paused
+    assert shared_jf.async_pause.await_count == 2
 
 
 @pytest.mark.asyncio

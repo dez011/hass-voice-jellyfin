@@ -454,14 +454,18 @@ def _router_with_device_filter(device_filter, jellyfin=None, tv=None):
 
 
 @pytest.mark.asyncio
-async def test_pause_targets_only_matching_device():
+async def test_pause_targets_only_my_user_session():
+    """With user_filter set, broadcast only hits that user's sessions."""
     jellyfin = MagicMock()
     jellyfin.async_get_sessions = AsyncMock(return_value=[
         PlaybackSession(id="s-mine", user_id="u1", item=MediaItem(id="i1", name="X", type="Movie"), device_name="Living Room"),
         PlaybackSession(id="s-brother", user_id="u2", item=MediaItem(id="i2", name="Y", type="Movie"), device_name="Bedroom"),
     ])
     jellyfin.async_pause = AsyncMock()
-    router = _router_with_device_filter("Living Room", jellyfin=jellyfin)
+    router = IntentRouter(
+        jellyfin=jellyfin, tv=MagicMock(), nav=MagicMock(), hass=MagicMock(),
+        user_filter="u1",
+    )
     provider = _provider_returning({"intent": "PAUSE", "params": {}})
 
     await router.async_route("pause", provider, AIContext())
