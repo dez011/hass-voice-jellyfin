@@ -11,9 +11,18 @@ from custom_components.voice_jellyfin.ai.intent_router import IntentRouter, Inte
 from custom_components.voice_jellyfin.jellyfin.models import MediaItem, PlaybackSession
 
 
+def _default_jellyfin():
+    jf = MagicMock()
+    jf.async_get_sessions = AsyncMock(return_value=[])
+    jf.async_send_general_command = AsyncMock()
+    jf._auth = MagicMock()
+    jf._auth.user_id = None
+    return jf
+
+
 def _make_router(jellyfin=None, tv=None, nav=None, hass=None):
     return IntentRouter(
-        jellyfin=jellyfin or MagicMock(),
+        jellyfin=jellyfin if jellyfin is not None else _default_jellyfin(),
         tv=tv or MagicMock(),
         nav=nav or MagicMock(),
         hass=hass or MagicMock(),

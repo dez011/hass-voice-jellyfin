@@ -528,12 +528,16 @@ class IntentRouter:
             session_id = params.get("session_id") or await self._active_session_id()
             if session_id:
                 await self._jellyfin.async_pause(session_id)
+            else:
+                _LOGGER.warning("voice_jellyfin: PAUSE ignored — no active playing session found")
 
     async def _handle_stop(self, params: dict[str, Any]) -> None:
         if self._jellyfin:
             session_id = params.get("session_id") or await self._active_session_id()
             if session_id:
                 await self._jellyfin.async_stop(session_id)
+            else:
+                _LOGGER.warning("voice_jellyfin: STOP ignored — no active playing session found")
 
     async def _handle_play_latest(self, result: IntentResult) -> IntentResult:
         if not self._jellyfin:
@@ -679,18 +683,61 @@ class IntentRouter:
             await wake_fn()
         return True
 
-    async def _active_session_id(self) -> Optional[str]:
+    async def _active_session_id(self, require_item: bool = True) -> Optional[str]:
         if not self._jellyfin:
             return None
         sessions = await self._jellyfin.async_get_sessions()
-        active = self._pick(sessions, require_item=True)
+        active = self._pick(sessions, require_item=require_item)
+        if not active:
+            _LOGGER.warning(
+                "voice_jellyfin: no active Jellyfin session found "
+                "(user_filter=%r, require_item=%s, total_sessions=%d)",
+                self._user_filter, require_item, len(sessions),
+            )
         return active.id if active else None
 
+    # Maps internal key names → Jellyfin general command names
+    _JELLYFIN_NAV_COMMANDS: dict[str, str] = {
+        "up": "MoveUp",
+        "down": "MoveDown",
+        "left": "MoveLeft",
+        "right": "MoveRight",
+        "select": "Select",
+        "back": "Back",
+        "home": "GoHome",
+        "page_up": "PageUp",
+        "page_down": "PageDown",
+        "volume_up": "VolumeUp",
+        "volume_down": "VolumeDown",
+        "mute": "ToggleMute",
+    }
+
     async def _send_key(self, key: str) -> None:
+        """Send a navigation/key command.
+
+        Tries Jellyfin's own general-command API first (works without ADB or
+        Apple TV).  Falls back to the TV controller for keys Jellyfin doesn't
+        handle (fast_forward, rewind, etc.).
+        """
+        jf_cmd = self._JELLYFIN_NAV_COMMANDS.get(key)
+        if jf_cmd and self._jellyfin:
+            session_id = await self._active_session_id(require_item=False)
+            if session_id:
+                try:
+                    await self._jellyfin.async_send_general_command(session_id, jf_cmd)
+                    return
+                except Exception as exc:
+                    _LOGGER.warning("voice_jellyfin: Jellyfin nav command %s failed: %s", jf_cmd, exc)
+            else:
+                _LOGGER.warning("voice_jellyfin: no session to send key %r to via Jellyfin API", key)
+
         if self._tv:
             await self._tv.async_send_key(key)
         else:
-            _LOGGER.debug("No TV controller configured; key %s ignored", key)
+            _LOGGER.warning(
+                "voice_jellyfin: key %r undelivered — no Jellyfin session and no TV controller",
+                key,
+            )
 
     _PLAY_PREFIXES = ("play ", "put on ", "watch ", "start ")
     _SEARCH_PREFIXES = ("search for ", "search ", "find ", "look up ", "show me ")

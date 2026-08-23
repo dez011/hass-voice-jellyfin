@@ -433,6 +433,14 @@ class JellyfinClient:
             await resp.read()
         _LOGGER.debug("Next track sent: session=%s", session_id)
 
+    async def async_send_general_command(self, session_id: str, command_name: str) -> None:
+        """Send a Jellyfin general command (MoveUp, Select, Back, etc.) to a session."""
+        session = self._get_session()
+        url = f"{self._auth.base_url()}/Sessions/{session_id}/Command/{command_name}"
+        async with session.post(url, headers=self._h()) as resp:
+            await resp.read()
+        _LOGGER.debug("General command sent: session=%s cmd=%s", session_id, command_name)
+
     async def async_set_favorite(self, user_id: str, item_id: str, is_favorite: bool = True) -> None:
         """Add or remove an item from the user's favorites."""
         user_id = await self._async_effective_user_id(user_id)
