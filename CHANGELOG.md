@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.6] — 2026-08-23
+
+- Add diagnostic WARNING log on every command so session-not-found failures show in HA logs
+
+
 ## [0.3.5] — 2026-08-22
 
 - Fix buttons doing nothing: nav keys now use Jellyfin general command API (no ADB needed)
