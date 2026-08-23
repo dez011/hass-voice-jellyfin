@@ -27,17 +27,29 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   exit 1
 fi
 
-# ── 3. Bump version in manifest.json ─────────────────────────────────────────
+# ── 3. Bump version in manifest.json and const.py ────────────────────────────
+# Both must move together — a test asserts they match, and HACS reads the
+# manifest while the integration reports const.VERSION.
 CURRENT=$(python3 -c "import json; d=json.load(open('$MANIFEST')); print(d['version'])")
 echo "Bumping $CURRENT → $VERSION"
 python3 - <<PYEOF
-import json, sys
+import json, re
+
 with open("$MANIFEST") as f:
     d = json.load(f)
 d["version"] = "$VERSION"
 with open("$MANIFEST", "w") as f:
     json.dump(d, f, indent=2)
     f.write("\n")
+
+const_path = "custom_components/voice_jellyfin/const.py"
+with open(const_path) as f:
+    src = f.read()
+new_src, n = re.subn(r'^VERSION = "[^"]*"', 'VERSION = "$VERSION"', src, count=1, flags=re.M)
+if n != 1:
+    raise SystemExit(f"error: could not find VERSION assignment in {const_path}")
+with open(const_path, "w") as f:
+    f.write(new_src)
 PYEOF
 
 # ── 4. Build CHANGELOG entry ──────────────────────────────────────────────────
@@ -70,7 +82,7 @@ else
 fi
 
 # ── 5. Commit + tag ───────────────────────────────────────────────────────────
-git add "$MANIFEST" "$CHANGELOG"
+git add "$MANIFEST" "$CHANGELOG" custom_components/voice_jellyfin/const.py
 git commit -m "chore: release v$VERSION"
 git tag "v$VERSION"
 

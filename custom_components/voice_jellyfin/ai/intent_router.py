@@ -126,6 +126,9 @@ class IntentRouter:
         # this, commands land on whichever session /Sessions lists first,
         # regardless of who it belongs to.
         self._user_filter = (user_filter or "").strip() or None
+        # Sessions targeted by the most recent broadcast, used to explain a
+        # command that Jellyfin accepted but no client acted on.
+        self._last_targets: list[Any] = []
         from ..const import BITRATE_PRESETS_KBPS
         self._bitrate_presets = bitrate_presets or BITRATE_PRESETS_KBPS
         self._bitrate_idx = current_bitrate_idx  # -1 = auto (no cap)
@@ -168,6 +171,9 @@ class IntentRouter:
         :returns: IntentResult with intent, params, reply and media title.
         """
         context.add_turn("user", text)
+        # Clear last command's targets so _control_warning() can't report on
+        # a stale broadcast from an earlier call.
+        self._last_targets = []
 
         # A previous PLAY was ambiguous — check if this command picks one
         # of the offered titles ("the first one", "batman begins", "two").
@@ -343,7 +349,42 @@ class IntentRouter:
             _LOGGER.error("Intent dispatch error for %s: %s", intent, exc)
             result.speech_reply = result.speech_reply or "Sorry, that didn't work."
 
+        # Jellyfin returns 204 for a command aimed at a client that never
+        # opened a websocket to receive it, so a "success" here can still mean
+        # nothing happened. Report that instead of claiming "Done."
+        if intent in self._SESSION_CONTROL_INTENTS:
+            warning = self._control_warning()
+            if warning:
+                result.speech_reply = warning
+
         return result
+
+    # Intents whose effect depends on the client actually listening for
+    # remote commands over its websocket.
+    _SESSION_CONTROL_INTENTS = frozenset({
+        "PAUSE", "STOP", "RESUME", "NEXT_EPISODE", "SELECT", "SCROLL",
+        "NAVIGATE", "GO_BACK", "REVERSE", "GO_HOME", "HOME", "REPEAT",
+    })
+
+    def _control_warning(self) -> Optional[str]:
+        """Explain why a broadcast command had no effect, or None if it
+        reached at least one client capable of acting on it."""
+        targets = self._last_targets
+        if not targets:
+            # Nothing was targeted — the handler's own reply ("nothing
+            # playing", "nothing to repeat") is more specific than anything
+            # this could add.
+            return None
+        if any(getattr(s, "supports_remote_control", False) for s in targets):
+            return None
+        clients = ", ".join(sorted({
+            (s.client or s.device_name or "Unknown") for s in targets
+        }))
+        return (
+            f"{clients} does not support Jellyfin remote control, so the command "
+            "was ignored. Play in the Jellyfin web player or on an Android TV / "
+            "Fire TV client to use these controls."
+        )
 
     # ------------------------------------------------------------------
     # Intent handlers
@@ -706,13 +747,27 @@ class IntentRouter:
         if require_item:
             real = [s for s in real if s.item]
 
+        # Remember the targets so _control_warning() can explain, after the
+        # fact, why a 204-accepted command produced no visible effect.
+        self._last_targets = real
+
+        controllable = [s for s in real if getattr(s, "supports_remote_control", False)]
         _LOGGER.debug(
-            "voice_jellyfin: broadcasting to %d session(s) %s",
-            len(real),
-            [f"{s.device_name}/{s.client}" for s in real],
+            "voice_jellyfin: broadcasting to %d session(s), %d controllable: %s",
+            len(real), len(controllable),
+            [f"{s.device_name}/{s.client}"
+             f"{'' if getattr(s, 'supports_remote_control', False) else ' (no remote control)'}"
+             for s in real],
         )
         if not real:
             _LOGGER.warning("voice_jellyfin: no sessions to send command to")
+        elif not controllable:
+            _LOGGER.warning(
+                "voice_jellyfin: none of the %d target session(s) support remote "
+                "control (%s) — Jellyfin will accept the command and discard it",
+                len(real),
+                ", ".join(s.client or s.device_name or "?" for s in real),
+            )
         return [s.id for s in real]
 
     # Keep single-session helper for callers that still need one (e.g. PLAY targeting)

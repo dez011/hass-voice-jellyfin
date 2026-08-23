@@ -99,6 +99,10 @@ class FireTVHarness:
             id="sess-1", user_id="user-1",
             item=MediaItem(id="item-now", name="Something", type="Movie"),
             position_ticks=0, is_paused=False,
+            # A client that actually listens for remote commands — otherwise
+            # the router (correctly) replaces replies with a "this client
+            # can't be controlled" warning.
+            supports_remote_control=True,
         )
         if shared_jellyfin is not None:
             jf = shared_jellyfin

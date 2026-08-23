@@ -476,3 +476,69 @@ async def test_async_skip_intro_seeks_to_next_chapter():
     # Should have seeked to chapter 1 start (60s)
     seek_params = http_session.post.call_args[1].get("params", {})
     assert seek_params.get("seekPositionTicks") == 60_000_000
+
+
+# ---------------------------------------------------------------------------
+# Uncontrollable clients (Swiftfin / Plezy / iOS): Jellyfin accepts the command
+# with HTTP 204 and then discards it because the client never opened a
+# websocket to receive it. Reporting "Done." there is a lie.
+# ---------------------------------------------------------------------------
+
+def _uncontrollable_session(client="Plezy", device="iPad"):
+    return PlaybackSession(
+        id="sess-nc", user_id="user-001",
+        item=MediaItem(id="i1", name="Bluey", type="Episode"),
+        position_ticks=0, is_paused=False,
+        client=client, device_name=device,
+        supports_remote_control=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pause_on_uncontrollable_client_reports_the_truth():
+    jellyfin = MagicMock()
+    jellyfin.async_get_sessions = AsyncMock(return_value=[_uncontrollable_session()])
+    jellyfin.async_pause = AsyncMock()
+
+    router = _make_router(jellyfin=jellyfin)
+    result = await router.async_route("pause", provider=None, context=AIContext(), ai_enabled=False)
+
+    # The command is still attempted — the server may yet deliver it.
+    jellyfin.async_pause.assert_awaited()
+    # ...but the reply must not claim success.
+    reply = result.speech_reply.lower()
+    assert "done" != reply
+    assert "plezy" in reply
+    assert "remote control" in reply
+
+
+@pytest.mark.asyncio
+async def test_controllable_client_gets_no_warning():
+    session = _uncontrollable_session(client="Jellyfin Android TV", device="Fire TV")
+    session.supports_remote_control = True
+
+    jellyfin = MagicMock()
+    jellyfin.async_get_sessions = AsyncMock(return_value=[session])
+    jellyfin.async_pause = AsyncMock()
+
+    router = _make_router(jellyfin=jellyfin)
+    result = await router.async_route("pause", provider=None, context=AIContext(), ai_enabled=False)
+
+    assert "remote control" not in (result.speech_reply or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_warning_names_every_uncontrollable_client():
+    sessions = [
+        _uncontrollable_session(client="Plezy", device="iPad"),
+        _uncontrollable_session(client="Jellyfin iPadOS", device="miguelh's iPad"),
+    ]
+    jellyfin = MagicMock()
+    jellyfin.async_get_sessions = AsyncMock(return_value=sessions)
+    jellyfin.async_pause = AsyncMock()
+
+    router = _make_router(jellyfin=jellyfin)
+    result = await router.async_route("pause", provider=None, context=AIContext(), ai_enabled=False)
+
+    assert "Plezy" in result.speech_reply
+    assert "Jellyfin iPadOS" in result.speech_reply
