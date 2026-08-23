@@ -16,7 +16,12 @@ _BUTTONS = [
     ("Stop",             "stop",             "mdi:stop"),
     ("Next Episode",     "next episode",     "mdi:skip-next"),
     ("Previous Episode", "previous episode", "mdi:skip-previous"),
-    ("Back",             "back",             "mdi:arrow-left"),
+    ("Up",               "up",               "mdi:arrow-up"),
+    ("Down",             "down",             "mdi:arrow-down"),
+    ("Left",             "left",             "mdi:arrow-left"),
+    ("Right",            "right",            "mdi:arrow-right"),
+    ("Select",           "select",           "mdi:gesture-tap"),
+    ("Back",             "back",             "mdi:keyboard-backspace"),
     ("Open Jellyfin",    "open jellyfin",    "mdi:jellyfish"),
 ]
 
