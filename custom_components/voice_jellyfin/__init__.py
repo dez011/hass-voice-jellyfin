@@ -13,9 +13,11 @@ from .coordinator import VoiceJellyfinCoordinator
 _LOGGER = logging.getLogger(LOGGER_NAME)
 
 PLATFORMS: list[Platform] = [
+    Platform.BUTTON,
+    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
-    Platform.SELECT,
+    Platform.TEXT,
 ]
 
 
