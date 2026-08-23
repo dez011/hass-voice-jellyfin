@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.0] — 2026-08-23
+
+- Report when a Jellyfin client cannot be remote controlled instead of falsely reporting success; fix release version drift between manifest and const
+
+
 ## [0.3.9] — 2026-08-23
 
 - Broadcast nav/playback commands to all sessions; fix button delivery when configured device has no active session
